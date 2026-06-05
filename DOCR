@@ -1,0 +1,1368 @@
+# DOCR — Exhaustive Engineering Manual
+
+## Document Control
+
+This manual describes the complete software systems under `Simon/` and `Speck/` at the repository root. It is written for developers, security researchers, and external auditors who may never open the source tree. Every Python module in both directories is documented individually. Configuration files (YAML) and dependency manifests are explained where they govern runtime behavior.
+
+---
+
+# 1. Global System Architecture and Isolation
+
+## 1.1 High-Level Purpose of the Repository
+
+This repository implements **machine-learning-assisted cryptanalysis and evaluation** for two NSA lightweight block ciphers configured at the **32-bit block / 64-bit key** size:
+
+- **SIMON 32/64** — a Feistel cipher with a nonlinear AND–rotate–XOR round function and an LFSR-based **z-sequence** key schedule. The Simon deployment uses **32 rounds** and z-sequence index **0**.
+
+- **SPECK 32/64** — an ARX (add–rotate–XOR) cipher with a key schedule built from the same round operation plus an explicit **round counter**. The Speck deployment uses **22 rounds**, left rotation **β = 2**, and right rotation **α = 7** on 16-bit words.
+
+Neither tree performs production cryptography. Both are **research pipelines** that:
+
+1. **Simulate** the cipher as a deterministic oracle (encrypt/decrypt, partial rounds, key expansion).
+
+2. **Synthesize labeled datasets** of ciphertext blocks (normal vs faulty or random).
+
+3. **Train statistical and neural models** to detect anomalies in ciphertext structure or to distinguish structured ciphertext **pairs** from random pairs.
+
+4. **Sweep round counts** to measure how detectability changes as encryption approaches full depth.
+
+The scientific goal is reproducible **evaluation of ML techniques** against reduced-round or malformed cipher outputs—not full key recovery against either cipher at full round count.
+
+## 1.2 Architectural Layers (Shared Pattern)
+
+Both ecosystems follow the same four-layer pattern, implemented with parallel folder names but **no shared Python packages**:
+
+| Layer | Responsibility | Simon location | Speck location |
+|-------|----------------|----------------|----------------|
+| Cipher core | Mathematical primitive | `simon.py` | `speck.py` |
+| Profile toolkit | Frozen 32/64 API, I/O, faults, datasets | `simon3264/` | `speck3264/` |
+| ML anomaly pipeline | Features, training, scoring | `ml/` | `ml/` |
+| Cryptanalysis experiments | Round sweep + neural distinguisher | `experiments/` | `experiments/` |
+
+Artifact directories (`data/`, `models/`, `results/`) are **local to each project root**. Training on Simon ciphertext does not affect Speck models and vice versa.
+
+## 1.3 Strict Structural Isolation
+
+Isolation is **enforced by repository layout and import graph**, not by runtime flags.
+
+**Zero cross-imports.** A search of all `.py` files shows:
+
+- Every module under `Simon/` imports only `simon`, `simon3264`, `ml`, or `experiments` as top-level packages relative to the Simon root.
+
+- Every module under `Speck/` imports only `speck`, `speck3264`, `ml`, or `experiments` relative to the Speck root.
+
+There is no `cipher_factory`, no shared library path, and no monorepo package that selects Simon vs Speck at runtime.
+
+**Independent deployable units.** An operator can copy **only** `Simon/` to Machine A and **only** `Speck/` to Machine B. Each copy carries its own `requirements.txt`, configs, tests, and entry-point scripts. Python’s `sys.path` is set to the project root in CLI modules (`train.py`, `experiments/*.py`) so imports resolve locally.
+
+**Parallel code with intentional duplication.** The `ml/` and `experiments/` folders are **maintained as separate copies** (not a single installable package). This duplicates some logic but guarantees that a Speck deployment never accidentally loads Simon constants (for example 32-round sweep values on a 22-round cipher).
+
+**Cryptographic parameter isolation.** Simon’s profile hard-codes `ROUNDS = 32` and `Z_INDEX = 0`. Speck’s profile hard-codes `ROUNDS = 22`, `ALPHA = 7`, `BETA = 2`. Experiment configs default to round lists appropriate to each cipher.
+
+**What isolation does not mean.** The two projects use **identical feature geometry** for the default neural distinguisher: 32-bit XOR of ciphertext pairs (`xor_bits` mode). That is a deliberate experimental design choice (comparable input width), not a code dependency. Autoencoder feature vectors (42 dimensions when all feature groups are enabled) use the same **statistical recipe** on 32-bit blocks.
+
+## 1.4 Two Experimental Tracks (Both Ecosystems)
+
+**Track A — Statistical anomaly detection (autoencoder).** A Torch MLP autoencoder trains on **normal** full-round ciphertext features only. At evaluation time, ciphertext produced with **fewer than full rounds** (or random blocks) should yield **higher reconstruction error**. The round sweep script scores many round counts and writes CSV and plots.
+
+**Track B — Neural distinguisher (supervised classifier).** For each round count `r`, the pipeline builds labeled data: **class 1** = two ciphertexts from the same key and related plaintexts (second plaintext equals first XOR a fixed word-wise delta Δ); **class 0** = two independent random blocks. A separate PyTorch MLP with sigmoid output trains with binary cross-entropy. Metrics include accuracy, AUC, and **advantage** = |accuracy − 0.5|.
+
+**Orchestration.** `experiments/run_all.py` in each tree may subprocess `ml/train.py --torch-only` if the autoencoder checkpoint is missing, then run both tracks and merge results into `ASSIGNMENT_SUMMARY.md` via `experiments/reporting.py`.
+
+---
+
+# 2. Third-Party Ecosystem and Dependencies
+
+Both `Simon/requirements.txt` and `Speck/requirements.txt` list the same six packages:
+
+```
+numpy>=1.23
+pytest>=7.0
+pyyaml>=6.0
+scikit-learn>=1.2
+matplotlib>=3.7
+torch>=2.0
+```
+
+There is no `requirements.txt` at the repository root; each cipher project installs independently.
+
+## 2.1 NumPy (`numpy`)
+
+**What it is.** The fundamental array computing library for Python, providing typed N-dimensional arrays and vectorized ufuncs.
+
+**Where it is used.** Effectively **every module** in both trees: cipher state as `uint16` arrays, feature matrices as `float64`, dataset storage, metric computation, and bridging to PyTorch via `.astype(np.float32)`.
+
+**Why it was chosen.** Block ciphers naturally operate on fixed-width words; NumPy batching encrypts thousands of blocks in tight loops without Python per-bit overhead. The entire cipher core (`simon.py`, `speck.py`) is vectorized over the batch dimension. ML pipelines assume NumPy as the interchange format before optional Torch conversion.
+
+**Modules relying on it (representative).** `simon.py`, `speck.py`, all of `simon3264/` and `speck3264/`, `ml/data.py`, `ml/features.py`, `ml/models.py` (NumPy autoencoder path), `experiments/distinguisher_data.py`, all test modules.
+
+## 2.2 pytest (`pytest`)
+
+**What it is.** A Python test runner supporting fixtures, parametrization, and `pytest.importorskip` for optional dependencies.
+
+**Where it is used.** All `test_*.py` files in both roots: cipher known-answer tests, profile tests, `test_experiments.py`, `test_ml_smoke.py`.
+
+**Why it was chosen.** Cryptographic code requires regression tests against published vectors; ML wiring needs smoke tests without full GPU training. pytest is the de facto standard for Python scientific projects.
+
+**Modules relying on it.** `test_simon.py`, `test_simon3264.py`, `test_speck.py`, `test_speck3264.py`, `test_experiments.py`, `test_ml_smoke.py`.
+
+## 2.3 PyYAML (`pyyaml`)
+
+**What it is.** YAML parser and emitter for Python.
+
+**Where it is used.** `ml/config.py` loads `configs/default.yaml`. `experiments/config.py` loads `configs/cryptanalysis.yaml` and `cryptanalysis_quick.yaml`. If PyYAML is missing, both loaders emit a warning and return **default dataclass instances** (tests still pass; production should install PyYAML).
+
+**Why it was chosen.** Experiment hyperparameters (sample counts, round lists, hidden layer sizes, learning rates) change frequently during research. YAML keeps configuration human-editable without recompiling code.
+
+**Modules relying on it.** `ml/config.py`, `experiments/config.py`, indirectly `ml/train.py`, `experiments/run_*` via loaded configs.
+
+## 2.4 scikit-learn (`scikit-learn`)
+
+**What it is.** Machine learning library; this project uses a narrow subset.
+
+**Where it is used.**
+
+- `ml/models.py` — `IsolationForest` for an optional anomaly baseline.
+
+- `ml/metrics.py` and `experiments/run_distinguisher.py` — `roc_auc_score` for AUC on validation/test scores.
+
+- `experiments/round_sweep.py` — AUC when comparing cipher scores to random baseline scores.
+
+**Why it was chosen.** Isolation Forest is a strong classical baseline for unsupervised anomaly detection on tabular features. ROC AUC is standard for binary distinguisher evaluation. Implementing these from scratch would add little value.
+
+**Modules relying on it.** `ml/models.py` (`IsolationForestModel`), `ml/metrics.py`, `experiments/run_distinguisher.py`, `experiments/round_sweep.py` (via `ml.metrics.compute_metrics`).
+
+## 2.5 matplotlib (`matplotlib`)
+
+**What it is.** Plotting library; used here for non-interactive PNG export.
+
+**Where it is used.** `experiments/round_sweep.py` plots mean autoencoder score vs rounds. `experiments/run_distinguisher.py` plots advantage and accuracy vs rounds. Imports are wrapped in try/except; if matplotlib is absent, experiments still write CSV/JSON.
+
+**Why it was chosen.** Assignment deliverables include visual summaries. matplotlib is ubiquitous in scientific Python stacks.
+
+**Modules relying on it.** `experiments/round_sweep.py`, `experiments/run_distinguisher.py`.
+
+## 2.6 PyTorch (`torch`)
+
+**What it is.** Deep learning framework with GPU support, `nn.Module`, optimizers, and automatic differentiation.
+
+**Where it is used.**
+
+- `ml/models.py` — `TorchAutoencoder` (encoder–decoder MLP, Adam, MSE loss).
+
+- `experiments/distinguisher_model.py` — `NeuralDistinguisher` (classifier MLP, Adam, `BCEWithLogitsLoss`).
+
+- Tests skip or import via `pytest.importorskip("torch")`.
+
+**Why it was chosen.** Track A and Track B require trainable neural networks with early stopping on validation loss. PyTorch is the primary training backend documented for Colab and local GPU use. The NumPy autoencoder in `ml/models.py` exists as a Torch-free fallback for Track A only.
+
+**Modules relying on it.** `ml/models.py`, `ml/train.py` (when not `--no-torch`), `experiments/distinguisher_model.py`, `experiments/run_distinguisher.py`, `experiments/round_sweep.py` (loads saved Torch model), `test_experiments.py`, `test_ml_smoke.py` (partial).
+
+**Training note.** This project does **not** use `torch.utils.data.DataLoader`. Batching is implemented manually inside `fit()` methods with `randperm` indices and slice loops. Auditors should not expect `Dataset` or `DataLoader` abstractions in the codebase.
+
+---
+
+# 3. Simon Ecosystem — Exhaustive File-by-File Breakdown
+
+The Simon tree contains **31 Python modules** organized as: one cipher core, eight `simon3264` modules (including package init), eight `ml` modules, eight `experiments` modules, one script, and five test modules.
+
+---
+
+## 3.1 `Simon/simon.py`
+
+### Exact purpose
+
+Implements the **full SIMON family** of block ciphers as vectorized NumPy operations: key expansion, encryption, decryption, optional per-round traces, and the user-facing `Simon` class. For this repository the critical instance is **SIMON 32/64** (n=16, m=4, 32 rounds, z₀).
+
+### Technical mechanics and code logic
+
+The module stores five **z-sequences** (`_Z_SEQUENCES`), each 62 bits long, used as constants in the key schedule. A table `_SIMON_PARAMS` maps each supported `(n, m)` pair to default `(z_index, rounds)`.
+
+**Bit operations.** `rol` and `ror` perform rotations within n-bit words using dtype-appropriate masks. **`f_round`** implements the SIMON round function f(x) = (ROL¹x ∧ ROL⁸x) ⊕ ROL²x.
+
+**`expand_key`.** Input keys arrive in **big-endian word order** [k_{m−1}, …, k₀]. The implementation reverses to ascending order for the recurrence. It initializes K as the m key words, sets constant c = 2^n − 4, then for i from m to rounds−1 appends a new subkey using: rotate K[i−1] right by 3, optionally XOR K[i−3] when m≥4, XOR with ROR of that value by 1, XOR z-bit, XOR K[i−m], XOR c. Output shape is (batch, rounds).
+
+**Encryption round `_enc_round`.** Feistel update: new left x ← y ⊕ f(x) ⊕ k; new right y ← old x. All words masked to n bits.
+
+**Decryption round `_dec_round`.** Inverts the Feistel step: recover previous x as current y; recover previous y as current x ⊕ f(y) ⊕ k.
+
+**`encrypt_blocks` / `decrypt_blocks`.** Loop over round index, applying subkeys with broadcasting when a single key row serves an entire batch.
+
+**`encrypt_blocks_trace`.** Records (x, y) after each round; output shape (rounds+1, N, 2).
+
+**Class `Simon`.** Validates (n,m), resolves z_index and rounds, coerces plaintext/ciphertext to (N,2), expands keys via `_coerce_key`, delegates to block functions.
+
+**Official test vector (32/64).** Plaintext words [0x6565, 0x6877], key [0x1918, 0x1110, 0x0908, 0x0100], ciphertext [0xc69b, 0xe9bb].
+
+### Architectural why
+
+This file is the **cryptographic root of trust** for the entire Simon pipeline. If `f_round` or `expand_key` is wrong, every dataset label, distinguisher feature, and autoencoder input is meaningless. Keeping it free of ML dependencies allows fast, deterministic unit tests. Higher layers must never reimplement Simon rounds inline.
+
+---
+
+## 3.2 `Simon/simon3264/__init__.py`
+
+### Exact purpose
+
+Defines the **public API** of the Simon 32/64 toolkit by re-exporting cipher, encoding, dataset, fault, feature, I/O, and trace symbols.
+
+### Technical mechanics and code logic
+
+Imports concrete functions and classes from submodules and lists them in `__all__` for documentation and `from simon3264 import …` usage.
+
+### Architectural why
+
+Provides a stable façade so `ml/data.py` and notebooks import one package name. Without it, callers would depend on internal file names across refactors.
+
+---
+
+## 3.3 `Simon/simon3264/cipher.py`
+
+### Exact purpose
+
+**Frozen-profile** wrapper `Simon3264` around `simon.py` for the assignment geometry: 16-bit words, 4 key words, 32 rounds, z index 0.
+
+### Technical mechanics and code logic
+
+Constants: `N_BITS`, `M_WORDS`, `BLOCK_BITS`, `KEY_BITS`, `ROUNDS`, `Z_INDEX`.
+
+**Subkey cache.** `get_subkeys` keys cache entries by raw key bytes, round count, and z_index. Cache avoids recomputing expansion when generating thousands of ciphertexts under one key.
+
+**`encrypt` / `decrypt`.** Full 32-round operations.
+
+**`encrypt_rounds`.** Validates num_rounds in [1, 32], truncates subkey array, encrypts partial schedule—used heavily in distinguisher and round-sweep data generation.
+
+**`encrypt_variant`.** Disables cache; allows alternate `rounds` or `z_index` for fault injection (wrong schedule constant).
+
+**`encrypt_with_subkeys` / `encrypt_ecb`.** Convenience paths when subkeys are precomputed.
+
+**`_coerce_blocks`.** Normalizes (2,) to (1,2) and validates width.
+
+### Architectural why
+
+Experiments must not silently use wrong round counts or z-sequences. The profile class is the **only supported cipher entry** for ML and experiments. Caching is an optimization critical for distinguisher dataset generation (many encryptions per key).
+
+---
+
+## 3.4 `Simon/simon3264/encoding.py`
+
+### Exact purpose
+
+Translates between **two-word blocks**, **byte strings**, and **32-bit bit vectors**; validates word ranges.
+
+### Technical mechanics and code logic
+
+Constants `WORD_MASK`, `BLOCK_BYTES=4`, `BLOCK_BITS=32`, `WORD_BITS=16`.
+
+**`block_to_bytes` / `bytes_to_block`.** Use `struct` little-endian or big-endian packing of two uint16 values.
+
+**`block_to_bits`.** For each word, emits bits from MSB to LSB within the word; concatenates left word then right word → length 32.
+
+**`blocks_to_bits`.** Row-wise application for batch shape (N, 2).
+
+**`validate_block` / `validate_blocks`.** Ensure values ∈ [0, 65535].
+
+### Architectural why
+
+Neural distinguishers in XOR-bit mode consume **exactly** this bit ordering. File I/O and hex fixtures must match NSA little-endian conventions documented in the implementation guide.
+
+---
+
+## 3.5 `Simon/simon3264/features.py`
+
+### Exact purpose
+
+Computes **per-block statistical features** for anomaly detection beyond raw bits.
+
+### Technical mechanics and code logic
+
+**`block_stats`.** Six floats per block: Hamming weight of left and right words, sum HW, HW of XOR of halves, normalized left and right word values (divided by 65535).
+
+**`blocks_to_feature_matrix`.** Optionally concatenates 32 raw bits.
+
+**`batch_hw_stats`.** Session-level mean/variance of per-block HW sums.
+
+**`chi_square_hw_vs_reference`.** Compares HW histogram of batch to 33-bin reference.
+
+**`sliding_window_xor_features`.** XOR consecutive blocks in a sequence, expand to bits—sequence-level analysis.
+
+### Architectural why
+
+Autoencoders benefit from **structured statistics** (HW, XOR of halves) that summarize ciphertext without exposing key material. Feeds `ml/features.build_feature_matrix`.
+
+---
+
+## 3.6 `Simon/simon3264/io.py`
+
+### Exact purpose
+
+**Persistence and ingestion** of ciphertext blocks and derived feature files.
+
+### Technical mechanics and code logic
+
+**`save_blocks_npz` / `load_blocks_npz`.** Compressed NPZ with `blocks`, optional `labels`, optional `keys`.
+
+**`blocks_from_file`.** Supports npz, raw binary (multiple of 4 bytes), or hex lines (two hex words, 8 hex chars, or byte tokens).
+
+**`decrypt_check`.** Decrypts and optionally compares to expected plaintext; returns match flag and L2 residual.
+
+**`blocks_to_feature_file`.** End-to-end load → validate → feature matrix → optional NPZ export.
+
+### Architectural why
+
+`ml/data.py` caches datasets to disk under `data/`. `ml/score.py` scores external files. Separates **storage format** from in-memory synthesis.
+
+---
+
+## 3.7 `Simon/simon3264/dataset.py`
+
+### Exact purpose
+
+**Synthetic labeled dataset factory** for supervised anomaly detection (label 0 = normal Simon ciphertext, label 1 = anomaly).
+
+### Technical mechanics and code logic
+
+**`DatasetConfig`.** Dataclass: seed, n_samples, anomaly_fraction, fault_types list, wrong_rounds_values, wrong_z_index, flip_bits, feature_bits flag.
+
+**`sample_keys` / `sample_plaintexts`.** Uniform random uint16 words; keys shape (n, 4) in big-endian word order.
+
+**`_apply_fault`.** Dispatches to `faults.py` implementations; returns block and fault name string.
+
+**`labeled_batch`.** Splits count into normal vs anomaly slots; for each normal sample encrypts with Simon3264; for each anomaly applies fault; stacks blocks; builds int8 labels; shuffles with permutation.
+
+**`generate_labeled_dataset`.** Calls `labeled_batch`, optionally attaches `blocks_to_bits` output.
+
+**`stratified_split`.** Builds composite stratum keys label_fault; within each stratum allocates train/val/test indices by configured ratios.
+
+### Architectural why
+
+`ml/data.py` depends on this module for all training data. Without it, the ML layer would need to embed cipher and fault logic—breaking separation of concerns.
+
+---
+
+## 3.8 `Simon/simon3264/faults.py`
+
+### Exact purpose
+
+**Inject synthetic anomalies** for dataset label 1.
+
+### Technical mechanics and code logic
+
+**`random_blocks`.** Uniform random (n,2) uint16—not from cipher.
+
+**`corrupt_block`.** Post-encryption bit flips, half swap, or XOR mask.
+
+**`identity_or_swap`.** Returns plaintext unchanged or swaps halves without encryption.
+
+**`wrong_rounds_encrypt`.** Calls `encrypt_rounds` with reduced r.
+
+**`wrong_z_encrypt`.** Calls `encrypt_variant` with alternate z_index—Simon-specific schedule fault.
+
+### Architectural why
+
+Trains models to detect **implementation errors** and non-standard encryption, not only uniform noise. Enables per-fault breakdown in `ml/metrics.fault_breakdown`.
+
+---
+
+## 3.9 `Simon/simon3264/trace.py`
+
+### Exact purpose
+
+**Round-by-round state inspection** and subkey feature extraction (Simon-only module in the toolkit).
+
+### Technical mechanics and code logic
+
+**`encrypt_trace`.** Returns array shape (rounds+1, N, 2) via `encrypt_blocks_trace`.
+
+**`encrypt_stop_at_round`.** Index trace at round r.
+
+**`subkey_bits`.** MSB-first flattening of all subkey words.
+
+**`subkey_summary_stats`.** Mean/std/min/max of subkey Hamming weights.
+
+### Architectural why
+
+Supports research extensions (intermediate state analysis) without polluting the default ML path. Not required for assignment scripts but completes the Simon toolkit.
+
+---
+
+## 3.10 `Simon/ml/__init__.py`
+
+### Exact purpose
+
+Marks `ml` as a package; exports `ExperimentConfig` and `load_config`.
+
+### Technical mechanics and code logic
+
+Minimal re-export from `ml.config`.
+
+### Architectural why
+
+Enables `from ml.config import load_config` when the Simon directory is on `PYTHONPATH`.
+
+---
+
+## 3.11 `Simon/ml/config.py`
+
+### Exact purpose
+
+**Central configuration schema** for anomaly-training experiments.
+
+### Technical mechanics and code logic
+
+Dataclasses: `DataConfig` (samples, faults, wrong_rounds, wrong_z_index, flip_bits), `SplitConfig`, `FeatureConfig` (four boolean feature groups), `IsoForestConfig`, `AutoencoderConfig`, `TorchAutoencoderConfig` (includes device auto/cuda/cpu), `ScoringConfig` (target_fpr), `PathConfig`, aggregated `ExperimentConfig`.
+
+**`load_config`.** Reads YAML from `configs/default.yaml` or provided path; `_from_dict` filters unknown keys.
+
+### Architectural why
+
+Single source of truth for `ml/train.py` and `ml/score.py`. Separates ML hyperparameters from `experiments/config.py` (distinguisher-specific).
+
+---
+
+## 3.12 `Simon/ml/data.py`
+
+### Exact purpose
+
+**Dataset cache orchestration** and **`DataSplit`** view for training.
+
+### Technical mechanics and code logic
+
+**`_config_hash`.** MD5 of JSON-serialized config subset → filenames `dataset_{tag}.npz`.
+
+**`generate_or_load_dataset`.** On cache hit: load blocks, features, meta JSON, recompute splits. On miss: build `DatasetConfig`, call `generate_labeled_dataset`, `build_feature_matrix`, stratified split, save three files.
+
+**`DataSplit`.** Indexes train/val/test feature rows and labels; `X_train_normal` filters label 0 on train only for one-class autoencoder training.
+
+### Architectural why
+
+Bridges `simon3264` synthesis to `ml/models.py`. Caching saves hours when tuning only neural hyperparameters.
+
+---
+
+## 3.13 `Simon/ml/features.py`
+
+### Exact purpose
+
+**Extended 42-dimensional feature vector** (when all groups enabled) for autoencoder input.
+
+### Technical mechanics and code logic
+
+**`bit_transitions`.** Counts 0→1 and 1→0 transitions along 32-bit MSB-first vector per block.
+
+**`word_entropy`.** Per-word entropy proxy from bit-HW treated as Bernoulli p.
+
+**`build_feature_matrix`.** Horizontally stacks enabled groups: 6 stats + 2 transitions + 2 entropy + 32 bits = 42.
+
+**`feature_names`.** Documents column order.
+
+**`build_hw_reference`.** Random or empirical HW histogram for chi-square tools in toolkit.
+
+### Architectural why
+
+Defines the **input geometry** for `TorchAutoencoder` in Track A. Round sweep uses this same matrix via `build_feature_matrix(blocks)`.
+
+---
+
+## 3.14 `Simon/ml/metrics.py`
+
+### Exact purpose
+
+**Threshold selection**, binary metrics, and **per-fault tables** for validation output.
+
+### Technical mechanics and code logic
+
+**`find_threshold_at_fpr`.** Takes quantile of normal-class scores so false positive rate ≈ target (default 1%).
+
+**`compute_metrics`.** Thresholds scores; computes TP/FP/FN/TN, precision, recall, F1, FPR, FNR, accuracy, ROC AUC via sklearn.
+
+**`fault_breakdown`.** Groups by fault string from metadata; recall defined differently for normal vs anomaly faults.
+
+**`format_metrics_table` / `format_fault_table`.** ASCII tables for CLI.
+
+### Architectural why
+
+`ml/train.py` prints human-readable evaluation; ensures consistent definitions across scripts.
+
+---
+
+## 3.15 `Simon/ml/models.py`
+
+### Exact purpose
+
+Three **anomaly scoring models**: Isolation Forest, NumPy MLP autoencoder, PyTorch MLP autoencoder.
+
+### Technical mechanics and code logic
+
+**`IsolationForestModel`.** Wraps sklearn; `score_samples` returns negated sklearn score (higher = more anomalous).
+
+**`NumpyAutoencoder`.** Custom `_Layer` with Adam-like updates; encoder dims [input → hidden… → latent], decoder reversed; min-max normalization per feature column fit on training data; MSE reconstruction error as score; early stopping on validation normal subset.
+
+**`TorchAutoencoder`.** Builds `nn.Sequential` encoder and decoder with ReLU and optional Dropout; Adam optimizer; `nn.MSELoss`; manual minibatch loop with `randperm`; saves state_dict and xmin/xmax in `.pt` file.
+
+**Score definition.** Mean squared error per sample between normalized input and reconstruction.
+
+### Architectural why
+
+Track A depends on **`TorchAutoencoder`** checkpoint. Isolation Forest and NumPy AE provide baselines without GPU.
+
+---
+
+## 3.16 `Simon/ml/train.py`
+
+### Exact purpose
+
+**CLI training driver** for all anomaly models on Simon-labeled data.
+
+### Technical mechanics and code logic
+
+Parses `--config`, `--n-samples`, `--epochs`, `--torch-only`, `--no-autoencoder`, `--no-torch`, paths, `--force-regen`, `--seed`.
+
+**`lock_seeds`.** Sets NumPy, Python hash, Torch seeds.
+
+Loads dataset via `generate_or_load_dataset`, builds `DataSplit`, trains models sequentially, writes `thresholds.json` and `results/val_metrics.json`.
+
+### Architectural why
+
+Primary human entry for Machine A baseline model before `experiments/run_all.py`.
+
+---
+
+## 3.17 `Simon/ml/score.py`
+
+### Exact purpose
+
+**Inference CLI** for saved models on test split or external files.
+
+### Technical mechanics and code logic
+
+Subcommands `evaluate` and `score-file`; loads model pickle/pt and thresholds; uses `build_feature_matrix` or file loader.
+
+### Architectural why
+
+Decouples deployment scoring from retraining.
+
+---
+
+## 3.18 `Simon/experiments/__init__.py`
+
+### Exact purpose
+
+Exports `CryptanalysisConfig` and `load_cryptanalysis_config`.
+
+### Technical mechanics and code logic
+
+Thin package init.
+
+### Architectural why
+
+Namespace for cryptanalysis scripts separate from `ml`.
+
+---
+
+## 3.19 `Simon/experiments/config.py`
+
+### Exact purpose
+
+YAML-backed config for **round sweep** and **distinguisher** experiments.
+
+### Technical mechanics and code logic
+
+`RoundSweepConfig`: round_values up to 32, n_samples_per_round, seed, reference_model name, model_dir, results_dir.
+
+`DistinguisherConfig`: round_values, n_samples_per_round, input_delta [1,0], feature_mode, hidden_dims [128,64], dropout, epochs, batch_size, lr, weight_decay, patience, device, paths.
+
+`CryptanalysisConfig` aggregates with `CryptanalysisPaths`.
+
+### Architectural why
+
+Round lists and distinguisher MLP sizes differ from `ml/config.py` defaults intentionally.
+
+---
+
+## 3.20 `Simon/experiments/distinguisher_data.py`
+
+### Exact purpose
+
+Builds **supervised distinguisher datasets** per round count.
+
+### Technical mechanics and code logic
+
+**`apply_delta`.** XORs delta into plaintext words.
+
+**`generate_distinguisher_dataset`.** Half samples: encrypt pt and pt⊕Δ under same key for r rounds; half samples: random pairs; features via `pair_to_features`; labels 1/0; shuffled.
+
+**`pair_to_features`.** Modes: xor_bits (32 dims), concat_bits (64), ml_features (42-dim statistical on XORed words).
+
+**`generate_or_load_distinguisher`.** NPZ cache `distinguisher_r{rounds}_{hash}.npz`.
+
+**`stratified_split_indices`.** Balanced splits per class.
+
+### Architectural why
+
+Track B training data source; separates data generation from model code.
+
+---
+
+## 3.21 `Simon/experiments/distinguisher_model.py`
+
+### Exact purpose
+
+**PyTorch binary classifier** for real vs random pairs.
+
+### Technical mechanics and code logic
+
+**Architecture.** Linear layers: input_dim → hidden_dims with ReLU and Dropout → single logit output (no sigmoid in forward; BCEWithLogitsLoss applies sigmoid internally).
+
+**Optimizer.** Adam with weight decay.
+
+**Loss.** `BCEWithLogitsLoss`.
+
+**Early stopping.** Validation loss patience restores best state_dict.
+
+**`predict_proba`.** Sigmoid of logits.
+
+### Architectural why
+
+Implements ML-based cryptanalysis distinct from reconstruction-error anomaly detection.
+
+---
+
+## 3.22 `Simon/experiments/metrics.py`
+
+### Exact purpose
+
+**Binary classification metrics** for distinguisher (TPR, TNR, accuracy).
+
+### Technical mechanics and code logic
+
+**`binary_classification_metrics`.** From hard predictions at 0.5 probability threshold.
+
+### Architectural why
+
+Lightweight metrics without full sklearn dependency for basic tables.
+
+---
+
+## 3.23 `Simon/experiments/round_sweep.py`
+
+### Exact purpose
+
+**Track A evaluation** across round counts using pretrained Torch autoencoder.
+
+### Technical mechanics and code logic
+
+**`generate_round_dataset`.** Encrypts n_samples blocks at round r; label 0 if r==32 else 1.
+
+**`evaluate_round`.** `build_feature_matrix` → `score_samples`; compares to threshold; also scores random blocks for AUC concatenation.
+
+**`run_round_sweep`.** Writes `round_sweep.csv`, `summary.json`, `score_vs_rounds.png`.
+
+### Architectural why
+
+Quantifies how anomaly detection responds as encryption approaches full 32-round Simon.
+
+---
+
+## 3.24 `Simon/experiments/run_distinguisher.py`
+
+### Exact purpose
+
+**Track B CLI** — train and evaluate distinguisher per round.
+
+### Technical mechanics and code logic
+
+Loop over `round_values`; fit `NeuralDistinguisher`; save `distinguisher_r{r}.pt`, `metrics_r{r}.json`; aggregate `summary.csv/json` and advantage plot.
+
+### Architectural why
+
+End-to-end Track B without manual steps.
+
+---
+
+## 3.25 `Simon/experiments/run_all.py`
+
+### Exact purpose
+
+**Master orchestration** for assignment workflow.
+
+### Technical mechanics and code logic
+
+Subprocess `ml/train.py --torch-only` if needed; calls round sweep and distinguisher; invokes reporting.
+
+### Architectural why
+
+Single reproducible command for auditors and Colab users.
+
+---
+
+## 3.26 `Simon/experiments/reporting.py`
+
+### Exact purpose
+
+Generates **`ASSIGNMENT_SUMMARY.md`** from experiment CSVs and PNG paths.
+
+### Technical mechanics and code logic
+
+Embeds methodology markdown; reads round_sweep.csv and distinguisher summary.csv; builds markdown tables; references plot files if present.
+
+### Architectural why
+
+Human-readable deliverable linking metrics to interpretation text.
+
+---
+
+## 3.27 `Simon/scripts/verify_assignment_setup.py`
+
+### Exact purpose
+
+**Pre-flight checklist** without training.
+
+### Technical mechanics and code logic
+
+Verifies required paths exist; loads YAML configs; checks Torch optional; notes if `torch_autoencoder.pt` missing.
+
+### Architectural why
+
+Fast validation on new clones.
+
+---
+
+## 3.28 `Simon/test_simon.py`
+
+### Exact purpose
+
+**Unit tests** for `simon.py` including official 32/64 vector and round-trip.
+
+### Technical mechanics and code logic
+
+pytest classes assert ciphertext bytes match specification; partial rounds differ from full.
+
+### Architectural why
+
+Cryptographic correctness gate.
+
+---
+
+## 3.29 `Simon/test_simon3264.py`
+
+### Exact purpose
+
+Tests **`Simon3264`** profile and `encrypt_rounds` bounds.
+
+### Technical mechanics and code logic
+
+Compares profile output to primitive; tests invalid round counts raise.
+
+### Architectural why
+
+Validates adapter used by all downstream code.
+
+---
+
+## 3.30 `Simon/test_experiments.py`
+
+### Exact purpose
+
+**Smoke tests** for experiment modules (small n, tmp_path CSV).
+
+### Technical mechanics and code logic
+
+Tests shapes, stratified splits, optional Torch distinguisher training, round_sweep CSV with synthetic AE.
+
+### Architectural why
+
+CI regression for wiring.
+
+---
+
+## 3.31 `Simon/test_ml_smoke.py`
+
+### Exact purpose
+
+**ML pipeline smoke tests** (features shape 42, iso forest, numpy AE save/load).
+
+### Technical mechanics and code logic
+
+Uses small `ExperimentConfig` and tmp_path data dir.
+
+### Architectural why
+
+Catches breaks between `ml/data` and `ml/models` early.
+
+---
+
+# 4. Speck Ecosystem — Exhaustive File-by-File Breakdown
+
+The Speck tree contains **30 Python modules**: one cipher core, seven `speck3264` modules (no `trace.py`), eight `ml` modules, eight `experiments` modules, one script, and five test modules. Each file below is documented as a **standalone Speck component**.
+
+---
+
+## 4.1 `Speck/speck.py`
+
+### Exact purpose
+
+Implements the **SPECK family** with vectorized ARX rounds and key schedule for all supported (n,m) parameter sets; production use in this repo is **SPECK 32/64**.
+
+### Technical mechanics and code logic
+
+**`_SPECK_PARAMS`.** Maps (n,m) to (alpha, beta, default_rounds). For 32/64: (7, 2, 22).
+
+**`expand_key`.** Reverses key to [k₀, l₀, …, l_{m−2}]. Maintains lists k_list and l_list. For i = 0 … rounds−2: compute l_new = (k_i + ROR(l_i, α)) ⊕ i; k_new = ROL(k_i, β) ⊕ l_new; append. Stack k_list → shape (batch, rounds).
+
+**`_enc_round`.** x ← ROR(x,α); x ← (x+y) mod 2^n; x ← x⊕k; y ← ROL(y,β); y ← y⊕x.
+
+**`_dec_round`.** Inverts using modular subtraction for the addition step.
+
+**`encrypt_blocks` / `decrypt_blocks` / `encrypt_blocks_trace`.** Same batching pattern as Simon but pass alpha, beta each call.
+
+**Class `Speck`.** Validates (n,m); exposes encrypt/decrypt with coercion.
+
+**Official vector.** Plaintext [0x6574, 0x694c], same key words as Simon test vector, ciphertext [0xa868, 0x42f2].
+
+### Architectural why
+
+Speck’s mathematical foundation. All Speck ciphertext in the project originates here; must remain independent of `simon.py`.
+
+---
+
+## 4.2 `Speck/speck3264/__init__.py`
+
+### Exact purpose
+
+Public exports for Speck 32/64 toolkit (cipher, encoding, dataset, faults—no trace exports).
+
+### Technical mechanics and code logic
+
+`__all__` lists ALPHA, BETA, ROUNDS, Speck3264, dataset helpers, encoding, faults.
+
+### Architectural why
+
+Single import surface for Speck-only deployments.
+
+---
+
+## 4.3 `Speck/speck3264/cipher.py`
+
+### Exact purpose
+
+Frozen **`Speck3264`** profile: 22 rounds, α=7, β=2.
+
+### Technical mechanics and code logic
+
+Subkey cache keyed by key bytes and round count only (no z_index). `encrypt_rounds` validates 1≤r≤22. No `encrypt_variant` method—Speck faults use wrong rounds only, not alternate schedules.
+
+Delegates to `speck.expand_key` and `encrypt_blocks` with ALPHA, BETA constants.
+
+### Architectural why
+
+Prevents experiment configs from requesting 32-round Speck encryption. Central oracle for Speck ML and experiments.
+
+---
+
+## 4.4 `Speck/speck3264/encoding.py`
+
+### Exact purpose
+
+Word/byte/bit conversions for 32-bit Speck blocks.
+
+### Technical mechanics and code logic
+
+Implemented locally in Speck (full copy of logic, not imported from Simon). Same MSB-first 32-bit layout as Simon encoding for compatible distinguisher feature size.
+
+### Architectural why
+
+Maintains **standalone Speck tree** while preserving 32-bit feature compatibility for ML experiments.
+
+---
+
+## 4.5 `Speck/speck3264/features.py`
+
+### Exact purpose
+
+Statistical per-block features for Speck ciphertext.
+
+### Technical mechanics and code logic
+
+Identical statistical column definitions to Simon’s `block_stats` (six HW-related features plus normalized words).
+
+### Architectural why
+
+Feeds Speck `ml/features.build_feature_matrix` with same 42-dim recipe when all flags enabled.
+
+---
+
+## 4.6 `Speck/speck3264/io.py`
+
+### Exact purpose
+
+NPZ and file I/O for Speck blocks.
+
+### Technical mechanics and code logic
+
+Same structural functions as Simon I/O but types reference `Speck3264`.
+
+### Architectural why
+
+Enables cached datasets and `ml/score.py score-file` on Speck machine.
+
+---
+
+## 4.7 `Speck/speck3264/dataset.py`
+
+### Exact purpose
+
+Labeled Speck dataset synthesis.
+
+### Technical mechanics and code logic
+
+`DatasetConfig` defaults `wrong_rounds_values` to [6, 11]—meaningful partial rounds below 22. Fault types: random, flip, swap, xor, identity, wrong_rounds—**no wrong_z** branch in `_apply_fault`.
+
+Uses `Speck3264.encrypt` for normals.
+
+### Architectural why
+
+Speck-specific anomaly diversity without Simon-only schedule faults.
+
+---
+
+## 4.8 `Speck/speck3264/faults.py`
+
+### Exact purpose
+
+Speck anomaly injection helpers.
+
+### Technical mechanics and code logic
+
+Same corrupt/random/wrong_rounds patterns as Simon faults except **no `wrong_z_encrypt`**.
+
+### Architectural why
+
+Matches Speck cipher capabilities.
+
+---
+
+## 4.9 `Speck/ml/__init__.py`
+
+### Exact purpose
+
+Speck ML package marker; exports `ExperimentConfig`, `load_config`.
+
+### Architectural why
+
+Import path resolution on Speck root.
+
+---
+
+## 4.10 `Speck/ml/config.py`
+
+### Exact purpose
+
+YAML configuration for Speck anomaly training.
+
+### Technical mechanics and code logic
+
+Same dataclass structure as Simon. `DataConfig` may still define `wrong_z_index` field for schema parity but Speck `ml/data.py` does not pass it into `DatasetConfig`.
+
+### Architectural why
+
+Parallel config ergonomics across machines.
+
+---
+
+## 4.11 `Speck/ml/data.py`
+
+### Exact purpose
+
+Dataset cache and `DataSplit` for Speck.
+
+### Technical mechanics and code logic
+
+Imports `speck3264` only. `_config_hash` omits wrong_z_index from hash in Speck copy (check - I read earlier it was removed from hash spec). Building `DatasetConfig` without wrong_z_index.
+
+Otherwise identical cache file pattern: `dataset_{tag}.npz`, features npz, meta json.
+
+### Architectural why
+
+Binds Speck synthesis to training without Simon imports.
+
+---
+
+## 4.12 `Speck/ml/features.py`
+
+### Exact purpose
+
+42-dim extended features for Speck autoencoder.
+
+### Technical mechanics and code logic
+
+Imports `speck3264.encoding` and `speck3264.features`; same `build_feature_matrix` composition.
+
+### Architectural why
+
+Defines TorchAutoencoder input size on Speck PC.
+
+---
+
+## 4.13 `Speck/ml/metrics.py`
+
+### Exact purpose
+
+Thresholds, metrics, fault tables for Speck training evaluation.
+
+### Technical mechanics and code logic
+
+Same algorithms as Simon copy.
+
+### Architectural why
+
+Consistent reporting on Speck machine.
+
+---
+
+## 4.14 `Speck/ml/models.py`
+
+### Exact purpose
+
+IsolationForest, NumpyAutoencoder, TorchAutoencoder implementations for Speck.
+
+### Technical mechanics and code logic
+
+Structurally parallel to Simon; trains on Speck-featured data when invoked from Speck `train.py`.
+
+### Architectural why
+
+Track A requires Speck-trained `torch_autoencoder.pt` on Speck machine.
+
+---
+
+## 4.15 `Speck/ml/train.py`
+
+### Exact purpose
+
+CLI: **Train SPECK 32/64 anomaly models**.
+
+### Technical mechanics and code logic
+
+Same control flow as Simon trainer; user-facing strings reference SPECK.
+
+### Architectural why
+
+Primary training entry on Machine B.
+
+---
+
+## 4.16 `Speck/ml/score.py`
+
+### Exact purpose
+
+Evaluate or score-file for Speck models.
+
+### Technical mechanics and code logic
+
+Uses `speck3264.io.blocks_from_file`.
+
+### Architectural why
+
+Speck inference path.
+
+---
+
+## 4.17 `Speck/experiments/__init__.py`
+
+### Exact purpose
+
+Exports cryptanalysis config loaders for Speck.
+
+### Architectural why
+
+Package boundary.
+
+---
+
+## 4.18 `Speck/experiments/config.py`
+
+### Exact purpose
+
+Cryptanalysis YAML loader with **Speck round caps**.
+
+### Technical mechanics and code logic
+
+Default `round_values` include 6,8,…,22 for sweep and 6–20 for distinguisher—never 32.
+
+### Architectural why
+
+Aligns configs with Speck3264.ROUNDS=22.
+
+---
+
+## 4.19 `Speck/experiments/distinguisher_data.py`
+
+### Exact purpose
+
+Speck pair-vs-random distinguisher data per round.
+
+### Technical mechanics and code logic
+
+Uses `Speck3264` and `encrypt_rounds`; cache files `distinguisher_r{rounds}_{tag}.npz`; same feature modes as Simon.
+
+### Architectural why
+
+Track B data for Speck.
+
+---
+
+## 4.20 `Speck/experiments/distinguisher_model.py`
+
+### Exact purpose
+
+PyTorch MLP distinguisher for Speck pairs.
+
+### Technical mechanics and code logic
+
+Adam + BCEWithLogitsLoss + dropout; identical architecture pattern to Simon distinguisher.
+
+### Architectural why
+
+Speck-specific trained classifiers per round.
+
+---
+
+## 4.21 `Speck/experiments/metrics.py`
+
+### Exact purpose
+
+Binary metrics helper for Speck distinguisher runs.
+
+### Architectural why
+
+Summary CSV columns.
+
+---
+
+## 4.22 `Speck/experiments/round_sweep.py`
+
+### Exact purpose
+
+Autoencoder round sweep for Speck; **full rounds = 22**.
+
+### Technical mechanics and code logic
+
+Imports `ROUNDS` from `speck3264.cipher`; skips r>22; labels normal at r==22; plot label “Speck ciphertext”.
+
+### Architectural why
+
+Track A adapted to Speck security parameter.
+
+---
+
+## 4.23 `Speck/experiments/run_distinguisher.py`
+
+### Exact purpose
+
+Track B CLI for Speck.
+
+### Technical mechanics and code logic
+
+Skips rounds >22; writes Speck results under `results/distinguisher/`.
+
+### Architectural why
+
+End-to-end Speck distinguisher experiment.
+
+---
+
+## 4.24 `Speck/experiments/run_all.py`
+
+### Exact purpose
+
+Orchestrates Speck train + both tracks + report.
+
+### Technical mechanics and code logic
+
+No cipher-selection flags; Speck-only paths.
+
+### Architectural why
+
+One-command Speck reproduction.
+
+---
+
+## 4.25 `Speck/experiments/reporting.py`
+
+### Exact purpose
+
+`ASSIGNMENT_SUMMARY.md` for Speck results.
+
+### Technical mechanics and code logic
+
+Methodology text references 22-round Speck and ARX; reads Speck CSV paths.
+
+### Architectural why
+
+Speck assignment deliverable.
+
+---
+
+## 4.26 `Speck/scripts/verify_assignment_setup.py`
+
+### Exact purpose
+
+Verifies Speck file layout and `Speck3264` import.
+
+### Technical mechanics and code logic
+
+Checks `speck.py`, `speck3264/cipher.py`, experiment scripts, tests.
+
+### Architectural why
+
+Speck machine setup validation.
+
+---
+
+## 4.27 `Speck/test_speck.py`
+
+### Exact purpose
+
+Unit tests for `speck.py` including official vector and decrypt inverse.
+
+### Architectural why
+
+Speck cryptographic gate.
+
+---
+
+## 4.28 `Speck/test_speck3264.py`
+
+### Exact purpose
+
+Tests `Speck3264` profile and encrypt_rounds limits.
+
+### Architectural why
+
+Validates Speck adapter.
+
+---
+
+## 4.29 `Speck/test_experiments.py`
+
+### Exact purpose
+
+Smoke tests for Speck experiments (expects 22 in default config when YAML loads).
+
+### Architectural why
+
+Regression for Speck wiring.
+
+---
+
+## 4.30 `Speck/test_ml_smoke.py`
+
+### Exact purpose
+
+ML smoke tests on Speck feature shapes and small models.
+
+### Architectural why
+
+Early detection of Speck ml layer breaks.
+
+---
+
+# 5. The ML and Data Pipeline Flow Chart in Prose
+
+This section walks through the **end-to-end data lifecycle** separately for each system, then unifies the neural architecture description. The narrative assumes the operator runs commands from the respective project root with dependencies installed.
+
+---
+
+## 5.1 Simon — Track A (Anomaly Autoencoder) Lifecycle
+
+**Stage 1 — Configuration.** The operator provides `configs/default.yaml` (or CLI overrides). `ml/config.py` loads sample counts (default 10,000), anomaly fraction (20%), fault type list, feature toggles, autoencoder hidden dimensions [128,64,32], latent 16, Adam lr 0.001, 40 epochs, batch 512, patience 8, and directory paths.
+
+**Stage 2 — Key and plaintext generation.** `ml/data.py` calls `simon3264.dataset.generate_labeled_dataset`. Inside, `sample_keys` draws random four-word keys and `sample_plaintexts` draws random two-word blocks. No external plaintext files are required for the default path; the cipher acts as an **oracle** on random inputs.
+
+**Stage 3 — Encryption and fault injection.** For each normal sample, `Simon3264.encrypt` runs **32 full rounds** with expanded subkeys (cached per key). For each anomaly sample, `_apply_fault` may return random blocks, bit-flipped ciphertext, wrong-round encryption (e.g. 8 or 16 rounds), wrong z-index schedule encryption, or other faults. Output blocks are shape (N, 2) `uint16`.
+
+**Stage 4 — Feature construction.** `ml/features.build_feature_matrix` converts each block to float64 vectors. With all groups enabled: six statistical features from Hamming weights and normalized words; two transition counts on the 32-bit expansion; two entropy proxies; thirty-two raw bits MSB-first per word. Total **42 features** per block.
+
+**Stage 5 — Persistence.** Cached under `data/dataset_{hash}.npz` (blocks, labels), `dataset_{hash}_features.npz`, and `dataset_{hash}.meta.json` listing fault type per row. Splits recomputed from stratified partition on label+fault.
+
+**Stage 6 — Training tensor preparation.** `DataSplit` exposes `X_train_normal`: only rows with label 0 from the training index. Labels 1 are excluded from autoencoder training because the model is **one-class reconstruction**: it learns to compress normal 32-round Simon ciphertext structure.
+
+**Stage 7 — Neural network architecture (TorchAutoencoder).** Input dimension 42. **Encoder:** Linear(42→128), ReLU, Dropout(0.1); Linear(128→64), ReLU, Dropout; Linear(64→32), ReLU, Dropout; Linear(32→16) latent. **Decoder:** mirrored Linear layers expanding 16→32→64→128→42 without activation on final layer. **Loss:** mean squared error between normalized input and reconstruction. **Optimizer:** Adam with weight_decay 1e-5. **Normalization:** per-feature min-max fit on training normals only; applied to val/test/score. **Early stopping:** monitors validation MSE on normal-only val rows (or all val if no normal flag); restores best weights after `patience` epochs without improvement.
+
+**Stage 8 — Threshold calibration.** On validation set, `find_threshold_at_fpr` picks score cutoff so ~1% of normal samples exceed threshold (configurable `target_fpr`). Saved in `models/thresholds.json` under key `torch_autoencoder`.
+
+**Stage 9 — Round sweep evaluation.** `experiments/round_sweep.py` loads the checkpoint. For each round count r in config: generate fresh plaintexts and keys, encrypt with `encrypt_rounds` for r rounds, build 42-dim features, compute reconstruction MSE scores. Compare to threshold: at r=32, high score means false alarm on good ciphertext; at r<32, high score means detection of truncated encryption. Also scores random blocks concatenated for ROC-style AUC. Writes `results/round_sweep/round_sweep.csv` and `score_vs_rounds.png` (matplotlib): x-axis rounds, y-axis mean reconstruction error for Simon vs random.
+
+---
+
+## 5.2 Simon — Track B (Neural Distinguisher) Lifecycle
+
+**Stage 1 — Configuration.** `configs/cryptanalysis.yaml` sets `round_values` (e.g. 8–20), `n_samples_per_round` (10,000), `input_delta: [1, 0]` (flip low bit of left word only), `feature_mode: xor_bits`, MLP hidden [128, 64], 30 epochs, batch 512, lr 0.001.
+
+**Stage 2 — Pair generation.** For each sample in the real class: draw key, plaintext P, compute P' = P ⊕ Δ, encrypt both with **r rounds** under the same key → ciphertext pair (C, C'). Features = bitwise XOR of C and C' expanded to 32 binary floats (MSB-first per word).
+
+**Stage 3 — Random class.** Draw two independent random blocks; same XOR-bit featureization. Label 0.
+
+**Stage 4 — Dataset assembly.** Balanced 50/50; shuffled; stratified train/val/test index split. Cached NPZ per round count.
+
+**Stage 5 — Classifier architecture (NeuralDistinguisher).** Input dimension 32 (xor_bits mode). Sequential Linear layers: 32→128→64→1 logits. ReLU and Dropout between hidden layers. **Loss:** `BCEWithLogitsLoss` against float labels 0/1. **Optimizer:** Adam. **Output:** sigmoid probability for class 1 (real pair).
+
+**Stage 6 — Evaluation metrics.** Threshold 0.5 on probability; compute accuracy, TPR, TNR, AUC (sklearn), advantage = |acc−0.5|. Per-round JSON and aggregate CSV. **Plots:** advantage and accuracy vs rounds in `advantage_vs_rounds.png`.
+
+---
+
+## 5.3 Speck — Track A and B Lifecycles
+
+The Speck pipelines are **structurally identical** to Sections 5.1 and 5.2 with these replacements:
+
+- All `Simon3264` calls become **`Speck3264`**.
+- Full encryption is **22 rounds**, not 32.
+- Round sweep treats r=22 as normal; r<22 as anomalous for autoencoder labeling.
+- Distinguisher sweeps skip r>22.
+- Fault set excludes wrong-z; default wrong rounds are 6 and 11.
+- Feature dimensions remain 42 (autoencoder) and 32 (xor_bits distinguisher) so architecture shapes unchanged.
+
+**Speck autoencoder** must be trained inside `Speck/` so weights learn Speck ciphertext distribution. Using a Simon-trained autoencoder on Speck ciphertext would invalidate Track A comparison.
+
+---
+
+## 5.4 Unified Neural Architecture Summary
+
+| Component | Track A (both) | Track B (both) |
+|-----------|----------------|----------------|
+| Framework | PyTorch | PyTorch |
+| Task | Unsupervised reconstruction | Supervised binary classification |
+| Input | 42-dim float (typical) | 32-dim float (xor_bits) |
+| Hidden | [128, 64, 32] → latent 16 | [128, 64] |
+| Output | 42-dim reconstruction | 1 logit |
+| Loss | MSE | BCEWithLogits |
+| Optimizer | Adam | Adam |
+| Batching | Manual randperm minibatches | Manual randperm minibatches |
+| DataLoader | Not used | Not used |
+
+**Isolation reminder.** Simon checkpoints live in `Simon/models/`; Speck checkpoints in `Speck/models/`. They are never loaded across roots in the provided code.
+
+---
+
+## 5.5 Configuration Files (Non-Python Artifacts)
+
+**`configs/default.yaml`** (each tree): drives `ml/train.py` — data volume, faults, feature flags, model hyperparameters, paths.
+
+**`configs/cryptanalysis.yaml`**: drives distinguisher and round sweep — round lists, distinguisher MLP, sample sizes.
+
+**`configs/cryptanalysis_quick.yaml`**: reduced rounds and samples for CI-style fast runs (Speck quick config uses max round 22; Simon quick uses 32).
+
+Auditors treating YAML as part of the system should version-control these alongside code; behavior falls back to dataclass defaults if files are missing.
+
+---
+
+## 5.6 Recommended Operating Sequence
+
+**Simon machine:** Install requirements from `Simon/requirements.txt`. Run `pytest` on cipher tests. Run `python ml/train.py --torch-only`. Run `python experiments/run_distinguisher.py` and `python experiments/round_sweep.py`, or `python experiments/run_all.py`. Read `Simon/results/ASSIGNMENT_SUMMARY.md`.
+
+**Speck machine:** Same sequence inside `Speck/` only.
+
+---
+
+*End of DOCR — Exhaustive Engineering Manual.*

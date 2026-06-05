@@ -1,0 +1,10 @@
+cipher,rounds,max_characteristic_prob,delta_left,delta_right
+simon,3,0.00390625,1,0
+simon,4,0.0009765625,1,0
+simon,5,1.52587890625e-05,1,0
+simon,3,0.00390625,1,0
+simon,4,0.0009765625,1,0
+simon,5,1.52587890625e-05,1,0
+simon,3,0.00390625,1,0
+simon,4,0.0009765625,1,0
+simon,5,1.52587890625e-05,1,0

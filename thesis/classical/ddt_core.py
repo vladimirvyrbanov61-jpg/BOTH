@@ -1,0 +1,120 @@
+"""Shared DDT structures, normalization, and max-trail composition."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Callable, Dict, Hashable, Iterable, TypeVar
+
+import numpy as np
+
+Delta32 = tuple[int, int]
+WORD_MASK = 0xFFFF
+
+T = TypeVar("T", bound=Hashable)
+
+
+def delta32_to_key(delta: Delta32) -> int:
+    return ((int(delta[0]) & WORD_MASK) << 16) | (int(delta[1]) & WORD_MASK)
+
+
+def key_to_delta32(key: int) -> Delta32:
+    key &= 0xFFFFFFFF
+    return (key >> 16, key & WORD_MASK)
+
+
+def normalize_counts(counts: dict[T, int | float]) -> dict[T, float]:
+    """Convert count histogram to probabilities in (0, 1]."""
+    if not counts:
+        return {}
+    total = float(sum(counts.values()))
+    if total <= 0:
+        return {}
+    out = {k: float(v) / total for k, v in counts.items()}
+    return out
+
+
+def validate_probabilities(probs: dict[T, float], *, tol: float = 1e-9) -> None:
+    for k, p in probs.items():
+        if not (0.0 <= p <= 1.0 + tol):
+            raise ValueError(f"invalid probability {p} for key {k}")
+    s = sum(probs.values())
+    if probs and abs(s - 1.0) > 1e-3:
+        raise ValueError(f"probabilities sum to {s}, expected ~1")
+
+
+def prune_top_k(states: dict[T, float], k: int) -> dict[T, float]:
+    if len(states) <= k:
+        return states
+    items = sorted(states.items(), key=lambda x: x[1], reverse=True)[:k]
+    return dict(items)
+
+
+def max_trail_probability(
+    initial_delta: Delta32,
+    transition: Dict[Delta32, Dict[Delta32, float]],
+    rounds: int,
+    *,
+    top_k: int = 32,
+) -> tuple[float, list[Delta32]]:
+    """Best single differential trail: max-product DP over sparse round transitions."""
+    if rounds < 1:
+        return 1.0, [initial_delta]
+
+    states: dict[Delta32, float] = {initial_delta: 1.0}
+    trail: list[Delta32] = [initial_delta]
+
+    for _ in range(rounds):
+        nxt: dict[Delta32, float] = {}
+        for d_in, p_in in states.items():
+            row = transition.get(d_in)
+            if not row:
+                continue
+            for d_out, p_cond in row.items():
+                cand = p_in * p_cond
+                if cand > nxt.get(d_out, 0.0):
+                    nxt[d_out] = cand
+        if not nxt:
+            return 0.0, trail
+        states = prune_top_k(nxt, top_k)
+        best = max(states, key=states.get)
+        trail.append(best)
+
+    return max(states.values()), trail
+
+
+def build_transition_from_pairs(
+    pairs: Iterable[tuple[Delta32, Delta32]],
+) -> Dict[Delta32, Dict[Delta32, float]]:
+    """P(out | in) from observed (delta_in, delta_out) samples."""
+    counts: dict[Delta32, dict[Delta32, int]] = defaultdict(lambda: defaultdict(int))
+    for d_in, d_out in pairs:
+        counts[d_in][d_out] += 1
+    return {d_in: normalize_counts(row) for d_in, row in counts.items()}
+
+
+def row_from_conditional(
+    transition: Dict[Delta32, Dict[Delta32, float]],
+    delta_in: Delta32,
+) -> dict[Delta32, float]:
+    return transition.get(delta_in, {})
+
+
+def highest_output_probability(
+    probs: dict[Delta32, float],
+) -> tuple[float, Delta32 | None]:
+    if not probs:
+        return 0.0, None
+    d_best = max(probs, key=probs.get)
+    return float(probs[d_best]), d_best
+
+
+def transition_row_monte_carlo(
+    sample_round_pairs: Callable[[Delta32, int], Iterable[tuple[Delta32, Delta32]]],
+    delta_in: Delta32,
+    n_samples: int,
+) -> dict[Delta32, float]:
+    pairs = list(sample_round_pairs(delta_in, n_samples))
+    counts: dict[Delta32, int] = defaultdict(int)
+    for _, d_out in pairs:
+        counts[d_out] += 1
+    return normalize_counts(counts)
