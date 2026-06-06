@@ -39,7 +39,16 @@ def load_neural_sweep(csv_path: Path) -> dict[int, float]:
             if row.get("split", "test") != "test":
                 continue
             r = int(row["rounds"])
-            out.setdefault(r, []).append(float(row["advantage_abs"]))
+            if "advantage_abs" in row and row["advantage_abs"] != "":
+                value = float(row["advantage_abs"])
+            elif "advantage" in row and row["advantage"] != "":
+                value = float(row["advantage"])
+            else:
+                raise KeyError(
+                    f"CSV {csv_path} missing advantage column for round {r}. "
+                    "Expected advantage_abs or advantage."
+                )
+            out.setdefault(r, []).append(value)
     return {r: sum(vals) / len(vals) for r, vals in out.items()}
 
 

@@ -100,7 +100,7 @@ def run_round_sweep(
     force_regen: bool = False,
     fresh_csv: bool = False,
     use_timestamped_dir: bool = True,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], Path]:
     """Sweep rounds for each cipher; append test metrics to multi-seed CSV files."""
     cfg = load_thesis_config(config_path)
     base = _REPO_ROOT
@@ -208,7 +208,7 @@ def run_round_sweep(
                 f"adv_abs={test_m['advantage_abs']:.4f}"
             )
 
-    return all_rows
+    return all_rows, results_path
 
 
 def resolve_config_path(

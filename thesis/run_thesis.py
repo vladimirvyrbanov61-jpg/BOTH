@@ -107,9 +107,10 @@ def main() -> int:
             print("[run_thesis] pytest failed; aborting.", file=sys.stderr)
             return rc
 
+    results_path = None
     if not args.skip_sweep:
         print("[run_thesis] starting round sweep …")
-        run_round_sweep(
+        _, results_path = run_round_sweep(
             cfg_path,
             ciphers=args.cipher,
             rounds_list=args.rounds,
@@ -124,6 +125,7 @@ def main() -> int:
             cfg_path,
             ciphers=args.cipher,
             force_classical=args.force_classical,
+            results_dir=results_path,
         )
 
     print("[run_thesis] done.")

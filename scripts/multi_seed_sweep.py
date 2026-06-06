@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -48,6 +50,21 @@ def run_seed_sweep(
     fresh_csv_first_seed : bool
         Delete multi_seed_raw.csv before first seed run (append for subsequent seeds).
     """
+    if results_dir is None:
+        results_dir = _REPO_ROOT / "results" / "thesis" / f"run_{datetime.now():%Y%m%d_%H%M%S}"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "run_type": "multi_seed_sweep",
+        "profile": profile,
+        "config": str(config) if config is not None else None,
+        "ciphers": ciphers or ["simon", "speck"],
+        "seeds": seeds,
+        "results_dir": str(results_dir),
+        "created_at": datetime.now().isoformat(),
+    }
+    with open(results_dir / "manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
     for i, seed in enumerate(seeds):
         print(f"\n{'='*70}")
         print(f"[SEED {i+1}/{len(seeds)}] Running seed={seed}")
@@ -70,7 +87,7 @@ def run_seed_sweep(
             cmd.extend(["--log-dir", str(log_base_dir)])
 
         if results_dir is not None:
-            cmd.extend(["--results-dir", str(results_dir)])
+            cmd.extend(["--results-dir", str(results_dir), "--no-timestamped-dir"])
 
         # Add seed
         cmd.extend(["--seed", str(seed)])
@@ -94,8 +111,9 @@ def run_seed_sweep(
 
     print(f"\n{'='*70}")
     print(f"[SUCCESS] All {len(seeds)} seeds completed.")
-    print(f"Results CSV: {_REPO_ROOT}/results/thesis/{{cipher}}_multi_seed_raw.csv")
+    print(f"Results CSV: {results_dir}/{{cipher}}_multi_seed_raw.csv")
     print(f"TensorBoard: tensorboard --logdir {log_base_dir or 'runs/thesis'}")
+    print(f"Manifest: {results_dir / 'manifest.json'}")
     print(f"{'='*70}\n")
 
 

@@ -33,7 +33,7 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
     cfg = load_config(cfg_path)
     train_overrides = {**cfg.get("training", {}), "epochs": 1, "patience": 1, "batch_size": 64}
 
-    rows = run_round_sweep(
+    rows, results_path = run_round_sweep(
         cfg_path,
         ciphers=["simon"],
         rounds_list=[3],
@@ -51,9 +51,11 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
     assert row["rounds"] == 3
     assert row["split"] == "test"
     assert 0.0 <= row["accuracy"] <= 1.0
-    assert row["advantage"] >= 0.0
+    assert row["advantage_abs"] >= 0.0
+    assert results_path.exists()
+    assert results_path.parent == smoke_dirs["results"]
 
-    csv_path = smoke_dirs["results"] / "simon_round_sweep.csv"
+    csv_path = results_path / "simon_round_sweep.csv"
     assert csv_path.exists()
     with open(csv_path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -61,7 +63,7 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
         data_rows = list(reader)
     assert len(data_rows) == 1
 
-    ckpt = smoke_dirs["models"] / "simon_R3.pt"
+    ckpt = smoke_dirs["models"] / "seed_1" / "simon" / "R3.pt"
     assert ckpt.exists()
     assert ckpt.stat().st_size > 0
 

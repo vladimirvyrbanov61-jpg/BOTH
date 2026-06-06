@@ -19,6 +19,8 @@ def config_fingerprint(
     n_samples: int,
     delta: tuple[int, int],
     seed: int,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
 ) -> str:
     spec = {
         "cipher": cipher,
@@ -26,6 +28,8 @@ def config_fingerprint(
         "n": n_samples,
         "delta": list(delta),
         "seed": seed,
+        "train_ratio": float(train_ratio),
+        "val_ratio": float(val_ratio),
         "blind": True,
         "feature": "concat_bits_64",
     }
