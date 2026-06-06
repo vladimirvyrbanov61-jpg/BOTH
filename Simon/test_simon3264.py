@@ -145,7 +145,7 @@ class TestFaults:
 
 class TestDataset:
     def test_labeled_batch_balance(self):
-        cfg = DatasetConfig(seed=42, n_samples=100, anomaly_fraction=0.3)
+        cfg = DatasetConfig(seed=1, n_samples=100, anomaly_fraction=0.3)
         cipher = Simon3264()
         rng = np.random.default_rng(cfg.seed)
         blocks, y, meta, _pt, _kw = labeled_batch(100, cipher, rng, cfg)

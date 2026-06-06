@@ -1,6 +1,6 @@
 """Plot aggregated multi-seed results and classical DDT bounds.
 
-Creates one PNG per metric (accuracy, auc_roc, tpr, tnr, advantage) for each cipher
+Creates one PNG per metric (accuracy, auc_roc, tpr, tnr, advantage_abs, advantage_edge, youden_j) for each cipher
 from the `{cipher}_multi_seed_raw.csv` files. Also creates DDT plots from
 `{cipher}_classical_bounds.csv`.
 
@@ -23,7 +23,7 @@ RESULTS_DIR = _REPO_ROOT / "thesis" / "eval" / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR = _REPO_ROOT / "results" / "thesis"
 
-METRICS = ["accuracy", "auc_roc", "tpr", "tnr", "advantage"]
+METRICS = ["accuracy", "auc_roc", "tpr", "tnr", "advantage_abs", "advantage_edge", "youden_j"]
 
 
 def load_multi_seed_csv(path: Path) -> pd.DataFrame:
@@ -84,7 +84,6 @@ def plot_multi_seed_for_cipher(cipher: str):
         stds = [agg[r].get(f"{m}_std", math.nan) for r in rounds]
         title = f"{cipher.upper()}32/64 — {m} (mean ± std across seeds)"
         out_path = RESULTS_DIR / f"{cipher}_{m}.png"
-        # For advantage, also plot as absolute advantage if needed (already advantage is |acc-0.5|)
         plot_metric_rounds(rounds, means, stds, title, out_path, ylabel=m)
         print(f"[plot] saved {out_path}")
 

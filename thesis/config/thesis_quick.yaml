@@ -12,7 +12,7 @@ val_ratio: 0.15
 
 rounds: [3, 4, 5]
 
-seed: 42
+seed: 1
 data_dir: thesis/data/cache
 
 model_dir: models/thesis

@@ -1,7 +1,7 @@
 # SIMON 32/64 anomaly detection — default experiment config
 
 data:
-  seed: 42
+  seed: 1
   n_samples: 500000
   chunk_size: 25000
   anomaly_fraction: 0.20
@@ -45,7 +45,7 @@ autoencoder:
   lr: 0.001
   weight_decay: 0.00001
   patience: 10
-  seed: 42
+  seed: 1
 
 torch_autoencoder:
   hidden_dims: [128, 64, 32]
@@ -56,7 +56,7 @@ torch_autoencoder:
   lr: 0.001
   weight_decay: 0.00001
   patience: 20
-  seed: 42
+  seed: 1
   device: auto
   checkpoint_path: models/torch_autoencoder_best.pt
 

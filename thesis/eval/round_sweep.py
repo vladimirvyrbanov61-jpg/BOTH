@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +27,9 @@ CSV_FIELDS = [
     "auc_roc",
     "tpr",
     "tnr",
-    "advantage",
+    "advantage_abs",
+    "advantage_edge",
+    "youden_j",
 ]
 
 
@@ -36,6 +40,40 @@ def load_thesis_config(path: Path | None = None) -> dict[str, Any]:
 def _resolve_path(base: Path, value: str) -> Path:
     p = Path(value)
     return p if p.is_absolute() else base / p
+
+
+def _create_timestamped_run_dir(base_results_path: Path) -> Path:
+    """Create a timestamped results directory for experimental hygiene."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = base_results_path / f"run_{timestamp}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def _save_run_manifest(
+    run_dir: Path,
+    seeds: list[int],
+    ciphers: list[str],
+    rounds: list[int],
+    train_ratio: float,
+    val_ratio: float,
+    input_delta: tuple[int, int],
+    n_samples: int,
+) -> None:
+    """Save a manifest.json tracking experiment metadata."""
+    manifest = {
+        "timestamp": datetime.now().isoformat(),
+        "seeds": seeds,
+        "ciphers": ciphers,
+        "rounds": rounds,
+        "train_ratio": train_ratio,
+        "val_ratio": val_ratio,
+        "input_delta": list(input_delta),
+        "n_samples_per_round": n_samples,
+    }
+    manifest_path = run_dir / "manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
 
 
 def _append_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
@@ -61,6 +99,7 @@ def run_round_sweep(
     seed_override: int | None = None,
     force_regen: bool = False,
     fresh_csv: bool = False,
+    use_timestamped_dir: bool = True,
 ) -> list[dict[str, Any]]:
     """Sweep rounds for each cipher; append test metrics to multi-seed CSV files."""
     cfg = load_thesis_config(config_path)
@@ -72,7 +111,7 @@ def run_round_sweep(
 
     rounds_list = rounds_list or cfg.get("rounds", [3, 4, 5, 6, 7, 8, 9, 10])
     n = n_samples if n_samples is not None else int(cfg.get("n_samples_per_round", 100_000))
-    seed = seed_override if seed_override is not None else int(cfg.get("seed", 42))
+    seed = seed_override if seed_override is not None else int(cfg.get("seed", 1))
     delta = tuple(cfg.get("input_delta", list(DEFAULT_INPUT_DELTA)))
     data_path = _resolve_path(
         base, str(data_dir) if data_dir is not None else cfg.get("data_dir", "thesis/data/cache")
@@ -89,6 +128,23 @@ def run_round_sweep(
         log_path = _resolve_path(base, str(log_dir)) if not Path(log_dir).is_absolute() else Path(log_dir)
     train_cfg = TrainConfig.from_dict(cfg.get("training", {}))
     train_cfg.seed = seed
+    train_ratio = float(cfg.get("train_ratio", 0.7))
+    val_ratio = float(cfg.get("val_ratio", 0.15))
+
+    # Create timestamped results directory for experimental hygiene
+    if use_timestamped_dir:
+        results_path = _create_timestamped_run_dir(results_path)
+        _save_run_manifest(
+            results_path,
+            seeds=[seed],
+            ciphers=cipher_names,
+            rounds=rounds_list,
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            input_delta=delta,
+            n_samples=n,
+        )
+        print(f"[sweep] Using timestamped results directory: {results_path}")
 
     all_rows: list[dict[str, Any]] = []
 
@@ -109,6 +165,8 @@ def run_round_sweep(
                 n_samples=n,
                 input_delta=delta,
                 seed=seed,
+                train_ratio=train_ratio,
+                val_ratio=val_ratio,
                 data_dir=data_path,
                 force_regen=force_regen,
             )
@@ -147,7 +205,7 @@ def run_round_sweep(
             print(
                 f"[sweep] seed={seed} {cipher} R={rounds} — "
                 f"acc={test_m['accuracy']:.4f} auc={test_m['auc_roc']:.4f} "
-                f"adv={test_m['advantage']:.4f}"
+                f"adv_abs={test_m['advantage_abs']:.4f}"
             )
 
     return all_rows
@@ -236,6 +294,11 @@ def main() -> None:
         action="store_true",
         help="Delete existing per-cipher multi_seed_raw.csv before writing",
     )
+    parser.add_argument(
+        "--no-timestamped-dir",
+        action="store_true",
+        help="Disable timestamped results directory (use base results_dir directly)",
+    )
     args = parser.parse_args()
     cfg_path = resolve_config_path(args.config, args.profile)
     run_round_sweep(
@@ -250,6 +313,7 @@ def main() -> None:
         seed_override=args.seed,
         force_regen=args.force_regen,
         fresh_csv=args.fresh_csv,
+        use_timestamped_dir=not args.no_timestamped_dir,
     )
 
 

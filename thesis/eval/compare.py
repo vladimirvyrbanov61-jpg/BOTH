@@ -39,7 +39,7 @@ def load_neural_sweep(csv_path: Path) -> dict[int, float]:
             if row.get("split", "test") != "test":
                 continue
             r = int(row["rounds"])
-            out.setdefault(r, []).append(float(row["advantage"]))
+            out.setdefault(r, []).append(float(row["advantage_abs"]))
     return {r: sum(vals) / len(vals) for r, vals in out.items()}
 
 
@@ -162,7 +162,7 @@ def run_compare(
     classical_cfg = cfg.get("classical", {})
     rounds = cfg.get("rounds", [3, 4, 5, 6, 7, 8, 9, 10])
     delta = tuple(cfg.get("input_delta", list(DEFAULT_INPUT_DELTA)))
-    seed = int(cfg.get("seed", 42))
+    seed = int(cfg.get("seed", 1))
     top_k = int(classical_cfg.get("top_k_dp", 32))
     n_simon = classical_cfg.get("n_samples_simon", 250_000)
     n_speck = classical_cfg.get("n_samples_speck", 1_000_000)

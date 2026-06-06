@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
-import shutil
 
 import numpy as np
 
@@ -29,7 +28,7 @@ class TrainConfig:
     weight_decay: float = 1e-4
     patience: int = 12
     device: str = "auto"
-    seed: int = 42
+    seed: int = 1
     channels: tuple[int, ...] = (32, 64, 128)
 
     @classmethod
@@ -167,7 +166,7 @@ def train_distinguisher(
                 "train_loss": train_loss_mean,
                 "val_auc": val_m["auc_roc"],
                 "val_accuracy": val_m["accuracy"],
-                "val_advantage": val_m["advantage"],
+                "val_advantage_abs": val_m["advantage_abs"],
             }
         )
 
@@ -176,7 +175,7 @@ def train_distinguisher(
             writer.add_scalar("Loss/Train", train_loss_mean, epoch)
             writer.add_scalar("AUC/Validation", val_m["auc_roc"], epoch)
             writer.add_scalar("Accuracy/Validation", val_m["accuracy"], epoch)
-            writer.add_scalar("Advantage/Validation", val_m["advantage"], epoch)
+            writer.add_scalar("AdvantageAbs/Validation", val_m["advantage_abs"], epoch)
 
         if val_m["auc_roc"] > best_auc:
             best_auc = val_m["auc_roc"]
@@ -205,11 +204,6 @@ def train_distinguisher(
         },
         ckpt_path,
     )
-
-    legacy_ckpt_path = model_dir / f"{cipher}_R{rounds}.pt"
-    if legacy_ckpt_path != ckpt_path:
-        legacy_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ckpt_path, legacy_ckpt_path)
 
     return {
         "model": model,

@@ -16,7 +16,7 @@ except ImportError:
 
 @dataclass
 class DataConfig:
-    seed: int = 42
+    seed: int = 1
     n_samples: int = 10_000
     anomaly_fraction: float = 0.20
     fault_types: list[str] = field(
@@ -48,7 +48,7 @@ class IsoForestConfig:
     n_estimators: int = 200
     max_samples: Union[str, int] = "auto"
     contamination: Union[str, float] = "auto"
-    random_state: int = 42
+    random_state: int = 1
     n_jobs: int = -1
 
 
@@ -63,7 +63,7 @@ class AutoencoderConfig:
     lr: float = 1e-3
     weight_decay: float = 1e-5
     patience: int = 10
-    seed: int = 42
+    seed: int = 1
 
 
 @dataclass
@@ -78,7 +78,7 @@ class TorchAutoencoderConfig:
     lr: float = 1e-3
     weight_decay: float = 1e-5
     patience: int = 8
-    seed: int = 42
+    seed: int = 1
     device: str = "auto"
 
 

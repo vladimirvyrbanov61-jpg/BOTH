@@ -34,14 +34,18 @@ def classification_metrics(
 
     tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     tnr = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    advantage = abs(acc - 0.5)
+    advantage_abs = abs(acc - 0.5)
+    advantage_edge = abs(2.0 * acc - 1.0)
+    youden_j = tpr + tnr - 1.0
 
     return {
         "accuracy": acc,
         "auc_roc": auc,
         "tpr": float(tpr),
         "tnr": float(tnr),
-        "advantage": float(advantage),
+        "advantage_abs": float(advantage_abs),
+        "advantage_edge": float(advantage_edge),
+        "youden_j": float(youden_j),
         "tp": tp,
         "tn": tn,
         "fp": fp,
@@ -63,7 +67,7 @@ def metrics_row(
         "rounds": rounds,
         "split": split,
         "n_samples": n_samples,
-        **{k: metrics[k] for k in ("accuracy", "auc_roc", "tpr", "tnr", "advantage")},
+        **{k: metrics[k] for k in ("accuracy", "auc_roc", "tpr", "tnr", "advantage_abs", "advantage_edge", "youden_j")},
     }
     if seed is not None:
         row["seed"] = seed

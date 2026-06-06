@@ -4,7 +4,7 @@ import pandas as pd
 import shutil
 from datetime import datetime
 
-SEEDS_TO_REMOVE = {42, 100, 101}
+SEEDS_TO_REMOVE = set()  # Seeds 42, 100, 101 eradicated from codebase
 BASE = Path('results') / 'thesis'
 TS = datetime.now().strftime('%Y%m%d%H%M%S')
 BACKUP_DIR = BASE / f'backup_{TS}'

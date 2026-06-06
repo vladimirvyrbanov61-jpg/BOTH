@@ -115,7 +115,9 @@ def generate_or_load(
     n_samples: int,
     *,
     input_delta: tuple[int, int] = DEFAULT_INPUT_DELTA,
-    seed: int = 42,
+    seed: int = 1,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
     data_dir: Path | str = "thesis/data/cache",
     force_regen: bool = False,
 ) -> dict[str, Any]:
@@ -127,6 +129,8 @@ def generate_or_load(
         n_samples=n_samples,
         delta=input_delta,
         seed=seed,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
     )
     path = cache_path(data_dir, cipher_name, rounds, tag)
 
@@ -136,7 +140,7 @@ def generate_or_load(
         return {
             **loaded,
             "rounds": int(loaded["rounds"][0]),
-            "splits": stratified_split_indices(y, seed=seed + rounds),
+            "splits": stratified_split_indices(y, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed + rounds),
             "cache_path": path,
         }
 
@@ -153,6 +157,6 @@ def generate_or_load(
         "X": X,
         "y": y,
         "rounds": rounds,
-        "splits": stratified_split_indices(y, seed=seed + rounds),
+        "splits": stratified_split_indices(y, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed + rounds),
         "cache_path": path,
     }
