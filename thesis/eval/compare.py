@@ -101,7 +101,7 @@ def ensure_classical_bounds(
         top_k=top_k,
         seed=seed,
     )
-    if bounds_path.exists() and not force:
+    if force and bounds_path.exists():
         bounds_path.unlink()
     save_classical_bounds_csv(bounds_path, rows)
     return load_classical_bounds_csv(bounds_path)

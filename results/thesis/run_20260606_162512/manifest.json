@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-06-06T16:25:12.905553",
+  "seeds": [
+    1
+  ],
+  "ciphers": [
+    "simon",
+    "speck"
+  ],
+  "rounds": [
+    3,
+    4,
+    5
+  ],
+  "train_ratio": 0.7,
+  "val_ratio": 0.15,
+  "input_delta": [
+    1,
+    0
+  ],
+  "n_samples_per_round": 5000
+}
