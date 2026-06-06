@@ -107,8 +107,8 @@ def main() -> None:
         "--seeds",
         type=int,
         nargs="+",
-        default=[1, 2, 3, 4, 5],
-        help="List of seeds to sweep (default: [1, 2, 3, 4, 5])",
+        default=list(range(1, 11)),
+        help="List of seeds to sweep (default: 1-10)",
     )
     parser.add_argument(
         "--profile",
