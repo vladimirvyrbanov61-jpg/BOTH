@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from datetime import datetime
@@ -11,6 +10,21 @@ from pathlib import Path
 from typing import Optional
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from thesis.config.loader import config_path_for_profile, load_config
+from thesis.eval.compare import run_compare
+from thesis.eval.manifest import artifact_inventory, build_manifest, utc_now, write_manifest
+from thesis.eval.plot_results import plot_all
+
+_TEST_FILES = [
+    "tests/test_thesis_encoding.py",
+    "tests/test_cnn.py",
+    "tests/test_classical.py",
+    "tests/test_round_sweep_smoke.py",
+    "tests/test_aggregate.py",
+]
 
 
 def run_seed_sweep(
@@ -53,17 +67,46 @@ def run_seed_sweep(
     if results_dir is None:
         results_dir = _REPO_ROOT / "results" / "thesis" / f"run_{datetime.now():%Y%m%d_%H%M%S}"
     results_dir.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "run_type": "multi_seed_sweep",
-        "profile": profile,
-        "config": str(config) if config is not None else None,
-        "ciphers": ciphers or ["simon", "speck"],
-        "seeds": seeds,
-        "results_dir": str(results_dir),
-        "created_at": datetime.now().isoformat(),
-    }
-    with open(results_dir / "manifest.json", "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+    config_path = config or config_path_for_profile(profile)
+    resolved_config = load_config(config_path)
+    cipher_names = ciphers or resolved_config.get("ciphers") or ["simon", "speck"]
+    manifest_path = results_dir / "manifest.json"
+    manifest = build_manifest(
+        repo_root=_REPO_ROOT,
+        run_type="multi_seed_sweep",
+        config_path=config_path,
+        config=resolved_config,
+        parameters={
+            "profile": profile,
+            "seeds": seeds,
+            "ciphers": cipher_names,
+            "rounds": resolved_config.get("rounds"),
+            "n_samples_per_round": resolved_config.get("n_samples_per_round"),
+            "input_delta": resolved_config.get("input_delta"),
+            "training": resolved_config.get("training", {}),
+            "force_regen": force_regen,
+            "fresh_csv_first_seed": fresh_csv_first_seed,
+            "test_gate": not skip_tests,
+        },
+        paths={
+            "results_dir": results_dir,
+            "model_dir": model_base_dir or resolved_config.get("model_dir"),
+            "log_dir": log_base_dir,
+            "data_dir": resolved_config.get("data_dir"),
+        },
+    )
+    write_manifest(manifest_path, manifest)
+
+    if not skip_tests:
+        test_cmd = [sys.executable, "-m", "pytest", *_TEST_FILES]
+        print(f"[TEST GATE] {' '.join(test_cmd)}")
+        ret = subprocess.call(test_cmd, cwd=str(_REPO_ROOT))
+        if ret != 0:
+            manifest["status"] = "failed"
+            manifest["failure"] = {"stage": "test_gate", "return_code": ret}
+            manifest["completed_at"] = utc_now()
+            write_manifest(manifest_path, manifest)
+            raise SystemExit(ret)
 
     for i, seed in enumerate(seeds):
         print(f"\n{'='*70}")
@@ -104,10 +147,26 @@ def run_seed_sweep(
         # Run
         ret = subprocess.call(cmd, cwd=str(_REPO_ROOT))
         if ret != 0:
+            manifest["status"] = "failed"
+            manifest["progress"]["failed_seeds"].append(seed)
+            manifest["failure"] = {"stage": "round_sweep", "seed": seed, "return_code": ret}
+            manifest["completed_at"] = utc_now()
+            manifest["artifacts"] = artifact_inventory(results_dir)
+            write_manifest(manifest_path, manifest)
             print(f"\n[ERROR] Seed {seed} failed with code {ret}. Stopping sweep.")
-            sys.exit(ret)
+            raise SystemExit(ret)
 
+        manifest["progress"]["completed_seeds"].append(seed)
+        manifest["artifacts"] = artifact_inventory(results_dir)
+        write_manifest(manifest_path, manifest)
         print(f"\n[SEED {seed}] Completed successfully.\n")
+
+    plot_all(results_dir, list(cipher_names))
+    run_compare(config_path, ciphers=list(cipher_names), results_dir=results_dir)
+    manifest["status"] = "completed"
+    manifest["completed_at"] = utc_now()
+    manifest["artifacts"] = artifact_inventory(results_dir)
+    write_manifest(manifest_path, manifest)
 
     print(f"\n{'='*70}")
     print(f"[SUCCESS] All {len(seeds)} seeds completed.")

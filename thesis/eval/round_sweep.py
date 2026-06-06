@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from thesis.config.loader import config_path_for_profile, load_config, load_profile
+from thesis.config.loader import config_path_for_profile, load_config
 from thesis.data.generator import DEFAULT_INPUT_DELTA, generate_or_load
+from thesis.eval.manifest import artifact_inventory, build_manifest, utc_now, write_manifest
 from thesis.eval.metrics import classification_metrics, metrics_row
+from thesis.eval.plot_results import plot_all
 from thesis.models.train import TrainConfig, _predict_scores, train_distinguisher
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,32 +52,6 @@ def _create_timestamped_run_dir(base_results_path: Path) -> Path:
     return run_dir
 
 
-def _save_run_manifest(
-    run_dir: Path,
-    seeds: list[int],
-    ciphers: list[str],
-    rounds: list[int],
-    train_ratio: float,
-    val_ratio: float,
-    input_delta: tuple[int, int],
-    n_samples: int,
-) -> None:
-    """Save a manifest.json tracking experiment metadata."""
-    manifest = {
-        "timestamp": datetime.now().isoformat(),
-        "seeds": seeds,
-        "ciphers": ciphers,
-        "rounds": rounds,
-        "train_ratio": train_ratio,
-        "val_ratio": val_ratio,
-        "input_delta": list(input_delta),
-        "n_samples_per_round": n_samples,
-    }
-    manifest_path = run_dir / "manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
-
-
 def _append_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not csv_path.exists()
@@ -100,6 +76,7 @@ def run_round_sweep(
     force_regen: bool = False,
     fresh_csv: bool = False,
     use_timestamped_dir: bool = True,
+    training_overrides: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], Path]:
     """Sweep rounds for each cipher; append test metrics to multi-seed CSV files."""
     cfg = load_thesis_config(config_path)
@@ -126,7 +103,8 @@ def run_round_sweep(
     log_path = None
     if log_dir is not None:
         log_path = _resolve_path(base, str(log_dir)) if not Path(log_dir).is_absolute() else Path(log_dir)
-    train_cfg = TrainConfig.from_dict(cfg.get("training", {}))
+    training_values = {**cfg.get("training", {}), **(training_overrides or {})}
+    train_cfg = TrainConfig.from_dict(training_values)
     train_cfg.seed = seed
     train_ratio = float(cfg.get("train_ratio", 0.7))
     val_ratio = float(cfg.get("val_ratio", 0.15))
@@ -134,17 +112,36 @@ def run_round_sweep(
     # Create timestamped results directory for experimental hygiene
     if use_timestamped_dir:
         results_path = _create_timestamped_run_dir(results_path)
-        _save_run_manifest(
-            results_path,
-            seeds=[seed],
-            ciphers=cipher_names,
-            rounds=rounds_list,
-            train_ratio=train_ratio,
-            val_ratio=val_ratio,
-            input_delta=delta,
-            n_samples=n,
+        manifest_path = results_path / "manifest.json"
+        manifest = build_manifest(
+            repo_root=base,
+            run_type="round_sweep",
+            config_path=Path(config_path or DEFAULT_CONFIG),
+            config=cfg,
+            parameters={
+                "seeds": [seed],
+                "ciphers": cipher_names,
+                "rounds": rounds_list,
+                "input_delta": list(delta),
+                "n_samples_per_round": n,
+                "train_ratio": train_ratio,
+                "val_ratio": val_ratio,
+                "training": asdict(train_cfg),
+                "force_regen": force_regen,
+                "fresh_csv": fresh_csv,
+            },
+            paths={
+                "results_dir": results_path,
+                "data_dir": data_path,
+                "model_dir": model_path,
+                "log_dir": log_path,
+            },
         )
+        write_manifest(manifest_path, manifest)
         print(f"[sweep] Using timestamped results directory: {results_path}")
+    else:
+        manifest_path = None
+        manifest = None
 
     all_rows: list[dict[str, Any]] = []
 
@@ -207,6 +204,14 @@ def run_round_sweep(
                 f"acc={test_m['accuracy']:.4f} auc={test_m['auc_roc']:.4f} "
                 f"adv_abs={test_m['advantage_abs']:.4f}"
             )
+
+    plot_all(results_path, cipher_names)
+    if manifest is not None and manifest_path is not None:
+        manifest["status"] = "completed"
+        manifest["completed_at"] = utc_now()
+        manifest["progress"]["completed_seeds"] = [seed]
+        manifest["artifacts"] = artifact_inventory(results_path)
+        write_manifest(manifest_path, manifest)
 
     return all_rows, results_path
 

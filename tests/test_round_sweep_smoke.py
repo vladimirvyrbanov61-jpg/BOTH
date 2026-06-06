@@ -43,6 +43,7 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
         results_dir=smoke_dirs["results"],
         force_regen=True,
         fresh_csv=True,
+        training_overrides=train_overrides,
     )
 
     assert len(rows) == 1
@@ -62,6 +63,15 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
         assert reader.fieldnames == CSV_FIELDS
         data_rows = list(reader)
     assert len(data_rows) == 1
+
+    aggregate_path = results_path / "simon_aggregate.csv"
+    assert aggregate_path.exists()
+    with open(aggregate_path, encoding="utf-8") as f:
+        aggregate_rows = list(csv.DictReader(f))
+    assert len(aggregate_rows) == 1
+    assert aggregate_rows[0]["n_seeds"] == "1"
+    assert float(aggregate_rows[0]["accuracy_std"]) == 0.0
+    assert (results_path / "simon_accuracy.png").exists()
 
     ckpt = smoke_dirs["models"] / "seed_1" / "simon" / "R3.pt"
     assert ckpt.exists()

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import csv
+import json
 from pathlib import Path
-from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,61 +17,49 @@ from thesis.classical.characteristic import (
 )
 from thesis.config.loader import config_path_for_profile, load_config
 from thesis.data.generator import DEFAULT_INPUT_DELTA
+from thesis.eval.aggregate import aggregate_csv
+from thesis.eval.manifest import artifact_inventory, write_manifest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = config_path_for_profile("full")
 
 
 def _resolve_path(base: Path, value: str) -> Path:
-    p = Path(value)
-    return p if p.is_absolute() else base / p
+    path = Path(value)
+    return path if path.is_absolute() else base / path
 
 
-def load_neural_sweep(csv_path: Path) -> dict[int, float]:
-    """Map rounds → mean test advantage from round_sweep.csv."""
-    out: dict[int, list[float]] = {}
+def load_neural_sweep(csv_path: Path) -> dict[int, dict[str, float]]:
+    """Map rounds to aggregate advantage and its 95% confidence interval."""
     if not csv_path.exists():
         return {}
-    with open(csv_path, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row.get("split", "test") != "test":
-                continue
-            r = int(row["rounds"])
-            if "advantage_abs" in row and row["advantage_abs"] != "":
-                value = float(row["advantage_abs"])
-            elif "advantage" in row and row["advantage"] != "":
-                value = float(row["advantage"])
-            else:
-                raise KeyError(
-                    f"CSV {csv_path} missing advantage column for round {r}. "
-                    "Expected advantage_abs or advantage."
-                )
-            out.setdefault(r, []).append(value)
-    return {r: sum(vals) / len(vals) for r, vals in out.items()}
+    rows, _ = aggregate_csv(csv_path)
+    return {
+        int(row["rounds"]): {
+            "mean": float(row["advantage_abs_mean"]),
+            "ci95_low": float(row["advantage_abs_ci95_low"]),
+            "ci95_high": float(row["advantage_abs_ci95_high"]),
+        }
+        for row in rows
+    }
 
 
 def require_neural_overlap(
     cipher: str,
     rounds: list[int],
-    neural: dict[int, float],
+    neural: dict[int, dict[str, float]],
     neural_path: Path,
 ) -> None:
-    """Raise a clear error if round_sweep.csv is missing or has no test rows."""
     if not neural_path.exists():
         raise FileNotFoundError(
             f"Neural sweep results missing for {cipher}: {neural_path}\n"
-            "Run the round sweep first, e.g.:\n"
+            "Run the round sweep first, for example:\n"
             "  py -3 -m thesis.eval.round_sweep --profile quick --fresh-csv\n"
             "  py -3 -m thesis.run_thesis --profile quick"
         )
-    overlap = sorted(set(rounds) & set(neural.keys()))
-    if not overlap:
+    if not sorted(set(rounds) & set(neural)):
         raise ValueError(
-            f"No test-split neural metrics for {cipher} at rounds {rounds} in {neural_path}.\n"
-            "The CSV exists but has no matching 'test' rows. Re-run:\n"
-            "  py -3 -m thesis.eval.round_sweep --profile quick --cipher "
-            f"{cipher} --fresh-csv"
+            f"No test-split neural metrics for {cipher} at rounds {rounds} in {neural_path}."
         )
 
 
@@ -90,7 +77,7 @@ def ensure_classical_bounds(
     bounds_path = results_dir / f"{cipher}_classical_bounds.csv"
     if not force and bounds_path.exists():
         loaded = load_classical_bounds_csv(bounds_path)
-        if all(r in loaded for r in rounds):
+        if all(rounds_value in loaded for rounds_value in rounds):
             return loaded
 
     rows = track_characteristic_over_rounds(
@@ -110,27 +97,42 @@ def ensure_classical_bounds(
 def plot_cipher_comparison(
     cipher: str,
     rounds: list[int],
-    neural: dict[int, float],
+    neural: dict[int, dict[str, float]],
     classical: dict[int, float],
     out_path: Path,
 ) -> None:
-    xs = sorted(set(rounds) & set(neural.keys()) & set(classical.keys()))
+    xs = sorted(set(rounds) & set(neural) & set(classical))
     if not xs:
         raise ValueError(
             f"No overlapping rounds for {cipher} (config rounds={rounds}, "
-            f"neural={sorted(neural.keys())}, classical={sorted(classical.keys())})."
+            f"neural={sorted(neural)}, classical={sorted(classical)})."
         )
 
-    adv = [neural[r] for r in xs]
-    probs = [max(classical[r], 1e-300) for r in xs]
-    log2p = [np.log2(p) for p in probs]
+    advantage = [neural[rounds_value]["mean"] for rounds_value in xs]
+    lower = [neural[rounds_value]["ci95_low"] for rounds_value in xs]
+    upper = [neural[rounds_value]["ci95_high"] for rounds_value in xs]
+    advantage_error = np.vstack(
+        [np.asarray(advantage) - lower, np.asarray(upper) - np.asarray(advantage)]
+    )
+    probabilities = [max(classical[rounds_value], 1e-300) for rounds_value in xs]
+    log2_probability = [np.log2(probability) for probability in probabilities]
 
     sns.set_theme(style="whitegrid", context="paper", font_scale=1.1)
     fig, ax1 = plt.subplots(figsize=(8, 5))
     color_ai = "#1f77b4"
-    color_cl = "#d62728"
+    color_classical = "#d62728"
 
-    ax1.plot(xs, adv, "o-", color=color_ai, linewidth=2, markersize=7, label="AI advantage |acc − 0.5|")
+    ax1.errorbar(
+        xs,
+        advantage,
+        yerr=advantage_error,
+        fmt="o-",
+        capsize=4,
+        color=color_ai,
+        linewidth=2,
+        markersize=7,
+        label="AI advantage |acc - 0.5| (95% CI)",
+    )
     ax1.set_xlabel("Round count R")
     ax1.set_ylabel("Neural advantage", color=color_ai)
     ax1.tick_params(axis="y", labelcolor=color_ai)
@@ -138,12 +140,18 @@ def plot_cipher_comparison(
     ax1.grid(True, alpha=0.3)
 
     ax2 = ax1.twinx()
-    ax2.plot(xs, log2p, "s--", color=color_cl, linewidth=2, markersize=7, label="Classical log₂(p_max)")
-    ax2.set_ylabel("log₂(max characteristic probability)", color=color_cl)
-    ax2.tick_params(axis="y", labelcolor=color_cl)
-
-    title = f"{cipher.upper()}32/64 — Neural distinguisher vs classical DDT bound"
-    ax1.set_title(title)
+    ax2.plot(
+        xs,
+        log2_probability,
+        "s--",
+        color=color_classical,
+        linewidth=2,
+        markersize=7,
+        label="Classical log2(p_max)",
+    )
+    ax2.set_ylabel("log2(max characteristic probability)", color=color_classical)
+    ax2.tick_params(axis="y", labelcolor=color_classical)
+    ax1.set_title(f"{cipher.upper()}32/64 - Neural distinguisher vs classical DDT bound")
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
@@ -159,57 +167,58 @@ def run_compare(
     config_path: Path | None = None,
     *,
     ciphers: list[str] | None = None,
+    rounds_list: list[int] | None = None,
     force_classical: bool = False,
     results_dir: Path | str | None = None,
 ) -> list[Path]:
     cfg = load_config(config_path or DEFAULT_CONFIG)
-    base = _REPO_ROOT
     results_path = _resolve_path(
-        base,
+        _REPO_ROOT,
         str(results_dir) if results_dir is not None else cfg.get("results_dir", "results/thesis"),
     )
     classical_cfg = cfg.get("classical", {})
-    rounds = cfg.get("rounds", [3, 4, 5, 6, 7, 8, 9, 10])
+    rounds = rounds_list or cfg.get("rounds", [3, 4, 5, 6, 7, 8, 9, 10])
     delta = tuple(cfg.get("input_delta", list(DEFAULT_INPUT_DELTA)))
     seed = int(cfg.get("seed", 1))
     top_k = int(classical_cfg.get("top_k_dp", 32))
-    n_simon = classical_cfg.get("n_samples_simon", 250_000)
-    n_speck = classical_cfg.get("n_samples_speck", 1_000_000)
-
+    sample_counts = {
+        "simon": int(classical_cfg.get("n_samples_simon", 250_000)),
+        "speck": int(classical_cfg.get("n_samples_speck", 1_000_000)),
+    }
     cipher_names = ciphers or cfg.get("ciphers") or ["simon", "speck"]
     if isinstance(cipher_names, str):
         cipher_names = [cipher_names]
 
     outputs: list[Path] = []
     for cipher in cipher_names:
-        neural_path = results_path / f"{cipher}_round_sweep.csv"
+        neural_path = results_path / f"{cipher}_multi_seed_raw.csv"
         neural = load_neural_sweep(neural_path)
         require_neural_overlap(cipher, rounds, neural, neural_path)
-
-        n_row = int(n_simon) if cipher == "simon" else int(n_speck)
         classical = ensure_classical_bounds(
             cipher,
             rounds,
             delta,
             results_path,
-            n_samples_row=n_row,
+            n_samples_row=sample_counts[cipher],
             top_k=top_k,
             seed=seed,
             force=force_classical,
         )
-
         out_path = results_path / f"{cipher}_vs_classical.png"
         plot_cipher_comparison(cipher, rounds, neural, classical, out_path)
         outputs.append(out_path)
         print(f"[compare] saved {out_path}")
 
+    manifest_path = results_path / "manifest.json"
+    if manifest_path.exists():
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        manifest["artifacts"] = artifact_inventory(results_path)
+        write_manifest(manifest_path, manifest)
     return outputs
 
 
-def resolve_config_path(
-    config: Path | None = None,
-    profile: str | None = None,
-) -> Path:
+def resolve_config_path(config: Path | None = None, profile: str | None = None) -> Path:
     if config is not None:
         return config
     if profile in ("full", "quick", None):
@@ -220,20 +229,16 @@ def resolve_config_path(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot AI vs classical differential bounds")
     parser.add_argument("--config", type=Path, default=None)
-    parser.add_argument(
-        "--profile",
-        choices=["full", "quick"],
-        default=None,
-        help="Use thesis.yaml (full) or thesis_quick.yaml (quick)",
-    )
+    parser.add_argument("--profile", choices=["full", "quick"], default=None)
     parser.add_argument("--cipher", action="append", choices=["simon", "speck"])
+    parser.add_argument("--rounds", type=int, nargs="+")
     parser.add_argument("--results-dir", type=Path, default=None)
     parser.add_argument("--force-classical", action="store_true")
     args = parser.parse_args()
-    cfg_path = resolve_config_path(args.config, args.profile)
     run_compare(
-        cfg_path,
+        resolve_config_path(args.config, args.profile),
         ciphers=args.cipher,
+        rounds_list=args.rounds,
         force_classical=args.force_classical,
         results_dir=args.results_dir,
     )

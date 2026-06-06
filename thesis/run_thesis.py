@@ -101,6 +101,8 @@ def main() -> int:
             "tests/test_thesis_encoding.py",
             "tests/test_cnn.py",
             "tests/test_classical.py",
+            "tests/test_round_sweep_smoke.py",
+            "tests/test_aggregate.py",
         ]
         rc = _run_pytest(test_files, verbose=args.pytest_verbose)
         if rc != 0:
@@ -124,6 +126,7 @@ def main() -> int:
         run_compare(
             cfg_path,
             ciphers=args.cipher,
+            rounds_list=args.rounds,
             force_classical=args.force_classical,
             results_dir=results_path,
         )
