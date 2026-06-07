@@ -1,0 +1,302 @@
+{
+  "artifacts": [
+    {
+      "bytes": 68022,
+      "path": "simon_accuracy.png",
+      "type": "png"
+    },
+    {
+      "bytes": 73471,
+      "path": "simon_advantage_abs.png",
+      "type": "png"
+    },
+    {
+      "bytes": 74382,
+      "path": "simon_advantage_edge.png",
+      "type": "png"
+    },
+    {
+      "bytes": 8470,
+      "path": "simon_aggregate.csv",
+      "type": "csv"
+    },
+    {
+      "bytes": 66689,
+      "path": "simon_auc_roc.png",
+      "type": "png"
+    },
+    {
+      "bytes": 327,
+      "path": "simon_classical_bounds.csv",
+      "type": "csv"
+    },
+    {
+      "bytes": 123400,
+      "path": "simon_classical_ddt.png",
+      "type": "png"
+    },
+    {
+      "bytes": 11362,
+      "path": "simon_multi_seed_raw.csv",
+      "type": "csv"
+    },
+    {
+      "bytes": 11362,
+      "path": "simon_round_sweep.csv",
+      "type": "csv"
+    },
+    {
+      "bytes": 73652,
+      "path": "simon_tnr.png",
+      "type": "png"
+    },
+    {
+      "bytes": 69490,
+      "path": "simon_tpr.png",
+      "type": "png"
+    },
+    {
+      "bytes": 120229,
+      "path": "simon_vs_classical.png",
+      "type": "png"
+    },
+    {
+      "bytes": 66237,
+      "path": "simon_youden_j.png",
+      "type": "png"
+    },
+    {
+      "bytes": 70119,
+      "path": "speck_accuracy.png",
+      "type": "png"
+    },
+    {
+      "bytes": 71758,
+      "path": "speck_advantage_abs.png",
+      "type": "png"
+    },
+    {
+      "bytes": 73053,
+      "path": "speck_advantage_edge.png",
+      "type": "png"
+    },
+    {
+      "bytes": 8717,
+      "path": "speck_aggregate.csv",
+      "type": "csv"
+    },
+    {
+      "bytes": 66651,
+      "path": "speck_auc_roc.png",
+      "type": "png"
+    },
+    {
+      "bytes": 351,
+      "path": "speck_classical_bounds.csv",
+      "type": "csv"
+    },
+    {
+      "bytes": 124285,
+      "path": "speck_classical_ddt.png",
+      "type": "png"
+    },
+    {
+      "bytes": 11528,
+      "path": "speck_multi_seed_raw.csv",
+      "type": "csv"
+    },
+    {
+      "bytes": 11528,
+      "path": "speck_round_sweep.csv",
+      "type": "csv"
+    },
+    {
+      "bytes": 74840,
+      "path": "speck_tnr.png",
+      "type": "png"
+    },
+    {
+      "bytes": 74754,
+      "path": "speck_tpr.png",
+      "type": "png"
+    },
+    {
+      "bytes": 116892,
+      "path": "speck_vs_classical.png",
+      "type": "png"
+    },
+    {
+      "bytes": 68078,
+      "path": "speck_youden_j.png",
+      "type": "png"
+    }
+  ],
+  "command": [
+    "C:\\Users\\vladi\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+    "D:\\BOTH\\scripts\\multi_seed_sweep.py",
+    "--seeds",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "--config",
+    "thesis\\config\\thesis_delta_0040.yaml",
+    "--log-dir",
+    "runs\\thesis_delta_0040",
+    "--fresh-csv",
+    "--force-regen"
+  ],
+  "completed_at": "2026-06-07T18:20:56.861013+00:00",
+  "config": {
+    "path": "D:\\BOTH\\thesis\\config\\thesis_delta_0040.yaml",
+    "resolved": {
+      "cipher": "simon",
+      "ciphers": [
+        "simon",
+        "speck"
+      ],
+      "classical": {
+        "n_samples_simon": 250000,
+        "n_samples_speck": 1000000,
+        "top_k_dp": 32
+      },
+      "data_dir": "thesis/data/cache",
+      "input_delta": [
+        64,
+        0
+      ],
+      "model_dir": "models/thesis_delta_0040",
+      "n_samples_per_round": 100000,
+      "results_dir": "results/thesis_delta_0040",
+      "rounds": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "seed": 1,
+      "train_ratio": 0.7,
+      "training": {
+        "batch_size": 512,
+        "device": "auto",
+        "epochs": 80,
+        "lr": 0.001,
+        "patience": 12,
+        "weight_decay": 0.0001
+      },
+      "val_ratio": 0.15
+    },
+    "sha256": "3ffdf5235ea8fc6b9e9fb8394db77d646b9f87ad6fe3a05263a4dd2e4aa3cb7f"
+  },
+  "created_at": "2026-06-07T13:42:51.707237+00:00",
+  "environment": {
+    "dependencies": {
+      "PyYAML": "6.0.3",
+      "matplotlib": "3.10.9",
+      "numpy": "2.4.4",
+      "scikit-learn": "1.9.0",
+      "seaborn": "0.13.2",
+      "torch": "2.12.0+cpu"
+    },
+    "machine": "AMD64",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 151 Stepping 5, GenuineIntel",
+    "python": "3.13.9 (tags/v3.13.9:8183fa5, Oct 14 2025, 14:09:13) [MSC v.1944 64 bit (AMD64)]",
+    "python_executable": "C:\\Users\\vladi\\AppData\\Local\\Programs\\Python\\Python313\\python.exe"
+  },
+  "git": {
+    "branch": "main",
+    "commit": "f271ec881c06dc6633f426437c7480b89312a726",
+    "dirty": true
+  },
+  "parameters": {
+    "ciphers": [
+      "simon",
+      "speck"
+    ],
+    "force_regen": true,
+    "fresh_csv_first_seed": true,
+    "input_delta": [
+      64,
+      0
+    ],
+    "n_samples_per_round": 100000,
+    "profile": "full",
+    "rounds": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "test_gate": true,
+    "training": {
+      "batch_size": 512,
+      "device": "auto",
+      "epochs": 80,
+      "lr": 0.001,
+      "patience": 12,
+      "weight_decay": 0.0001
+    }
+  },
+  "paths": {
+    "data_dir": "thesis/data/cache",
+    "log_dir": "runs\\thesis_delta_0040",
+    "model_dir": "models/thesis_delta_0040",
+    "results_dir": "D:\\BOTH\\results\\thesis_delta_0040\\run_20260607_164251"
+  },
+  "progress": {
+    "completed_seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "failed_seeds": []
+  },
+  "run_type": "multi_seed_sweep",
+  "schema_version": 2,
+  "statistics": {
+    "dispersion": "sample standard deviation (ddof=1; zero for one seed)",
+    "error_bars": "95% normal confidence interval: mean +/- 1.96 * SEM",
+    "grouping": [
+      "cipher",
+      "rounds",
+      "split"
+    ]
+  },
+  "status": "completed",
+  "updated_at": "2026-06-07T18:20:56.861749+00:00",
+  "working_directory": "D:\\BOTH"
+}

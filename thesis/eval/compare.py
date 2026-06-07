@@ -18,7 +18,7 @@ from thesis.classical.characteristic import (
 from thesis.config.loader import config_path_for_profile, load_config
 from thesis.data.generator import DEFAULT_INPUT_DELTA
 from thesis.eval.aggregate import aggregate_csv
-from thesis.eval.manifest import artifact_inventory, write_manifest
+from thesis.eval.manifest import artifact_inventory, utc_now, write_manifest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = config_path_for_profile("full")
@@ -88,10 +88,42 @@ def ensure_classical_bounds(
         top_k=top_k,
         seed=seed,
     )
-    if force and bounds_path.exists():
+    if bounds_path.exists():
         bounds_path.unlink()
     save_classical_bounds_csv(bounds_path, rows)
     return load_classical_bounds_csv(bounds_path)
+
+
+def plot_classical_bounds(
+    cipher: str,
+    rounds: list[int],
+    classical: dict[int, float],
+    out_path: Path,
+) -> None:
+    xs = sorted(set(rounds) & set(classical))
+    probabilities = [max(classical[rounds_value], 1e-300) for rounds_value in xs]
+    log2_probability = [np.log2(probability) for probability in probabilities]
+
+    sns.set_theme(style="whitegrid", context="paper", font_scale=1.1)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
+    ax1.plot(xs, probabilities, "o-", linewidth=2)
+    ax1.set_yscale("log")
+    ax1.set_xlabel("Round count R")
+    ax1.set_ylabel("Max characteristic probability")
+    ax1.set_xticks(xs)
+    ax1.set_title("Probability (log scale)")
+
+    ax2.plot(xs, log2_probability, "s-", color="#d62728", linewidth=2)
+    ax2.set_xlabel("Round count R")
+    ax2.set_ylabel("log2(max characteristic probability)")
+    ax2.set_xticks(xs)
+    ax2.set_title("Log2 probability")
+
+    fig.suptitle(f"{cipher.upper()}32/64 - Classical differential characteristic bound")
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_cipher_comparison(
@@ -204,6 +236,10 @@ def run_compare(
             seed=seed,
             force=force_classical,
         )
+        classical_path = results_path / f"{cipher}_classical_ddt.png"
+        plot_classical_bounds(cipher, rounds, classical, classical_path)
+        outputs.append(classical_path)
+        print(f"[compare] saved {classical_path}")
         out_path = results_path / f"{cipher}_vs_classical.png"
         plot_cipher_comparison(cipher, rounds, neural, classical, out_path)
         outputs.append(out_path)
@@ -214,6 +250,24 @@ def run_compare(
         with open(manifest_path, encoding="utf-8") as handle:
             manifest = json.load(handle)
         manifest["artifacts"] = artifact_inventory(results_path)
+        expected_ciphers = manifest.get("parameters", {}).get("ciphers", cipher_names)
+        expected_outputs = [
+            results_path / f"{expected_cipher}_{suffix}"
+            for expected_cipher in expected_ciphers
+            for suffix in (
+                "classical_bounds.csv",
+                "classical_ddt.png",
+                "vs_classical.png",
+            )
+        ]
+        if (
+            manifest.get("run_type") == "multi_seed_sweep"
+            and all(path.exists() for path in expected_outputs)
+            and manifest.get("progress", {}).get("completed_seeds")
+            == manifest.get("parameters", {}).get("seeds")
+        ):
+            manifest["status"] = "completed"
+            manifest["completed_at"] = utc_now()
         write_manifest(manifest_path, manifest)
     return outputs
 

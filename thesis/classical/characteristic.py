@@ -118,26 +118,46 @@ def track_characteristic_over_rounds(
     top_k: int = 32,
     seed: int = 0,
 ) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for r in round_list:
-        p_max, trail = max_characteristic_probability(
-            cipher,
-            r,
-            delta_in,
-            n_samples_row=n_samples_row,
-            top_k=top_k,
-            seed=seed,
-        )
-        rows.append(
-            {
+    requested_rounds = sorted(set(round_list))
+    if not requested_rounds:
+        return []
+    if requested_rounds[0] < 1:
+        raise ValueError("round counts must be positive")
+    if n_samples_row is None:
+        n_samples_row = 250_000 if cipher == "simon" else 1_000_000
+
+    f_ddt = compute_f_ddt_exact() if cipher == "simon" else None
+    transition_cache: dict[Delta32, dict[Delta32, float]] = {}
+    states: dict[Delta32, float] = {delta_in: 1.0}
+    rows_by_round: dict[int, dict[str, Any]] = {}
+
+    for round_index in range(1, requested_rounds[-1] + 1):
+        nxt: dict[Delta32, float] = {}
+        for current_delta, current_probability in states.items():
+            _expand_transition_rows(
+                cipher,
+                current_delta,
+                transition_cache,
+                n_samples_row=n_samples_row,
+                seed=seed + round_index - 1,
+                f_ddt_simon=f_ddt,
+            )
+            for output_delta, conditional_probability in transition_cache[current_delta].items():
+                candidate = current_probability * conditional_probability
+                if candidate > nxt.get(output_delta, 0.0):
+                    nxt[output_delta] = candidate
+
+        states = prune_top_k(nxt, top_k) if nxt else {}
+        if round_index in requested_rounds:
+            rows_by_round[round_index] = {
                 "cipher": cipher,
-                "rounds": r,
+                "rounds": round_index,
                 "delta_in": delta_in,
-                "max_characteristic_prob": p_max,
-                "trail_len": len(trail),
+                "max_characteristic_prob": max(states.values()) if states else 0.0,
+                "trail_len": round_index + 1,
             }
-        )
-    return rows
+
+    return [rows_by_round[rounds] for rounds in round_list]
 
 
 def save_classical_bounds_csv(

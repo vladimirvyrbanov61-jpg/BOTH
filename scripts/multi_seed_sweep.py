@@ -24,6 +24,7 @@ _TEST_FILES = [
     "tests/test_classical.py",
     "tests/test_round_sweep_smoke.py",
     "tests/test_aggregate.py",
+    "tests/test_compare_experiments.py",
 ]
 
 
@@ -64,11 +65,14 @@ def run_seed_sweep(
     fresh_csv_first_seed : bool
         Delete multi_seed_raw.csv before first seed run (append for subsequent seeds).
     """
-    if results_dir is None:
-        results_dir = _REPO_ROOT / "results" / "thesis" / f"run_{datetime.now():%Y%m%d_%H%M%S}"
-    results_dir.mkdir(parents=True, exist_ok=True)
     config_path = config or config_path_for_profile(profile)
     resolved_config = load_config(config_path)
+    if results_dir is None:
+        configured_results = Path(resolved_config.get("results_dir", "results/thesis"))
+        if not configured_results.is_absolute():
+            configured_results = _REPO_ROOT / configured_results
+        results_dir = configured_results / f"run_{datetime.now():%Y%m%d_%H%M%S}"
+    results_dir.mkdir(parents=True, exist_ok=True)
     cipher_names = ciphers or resolved_config.get("ciphers") or ["simon", "speck"]
     manifest_path = results_dir / "manifest.json"
     manifest = build_manifest(
@@ -162,7 +166,15 @@ def run_seed_sweep(
         print(f"\n[SEED {seed}] Completed successfully.\n")
 
     plot_all(results_dir, list(cipher_names))
-    run_compare(config_path, ciphers=list(cipher_names), results_dir=results_dir)
+    try:
+        run_compare(config_path, ciphers=list(cipher_names), results_dir=results_dir)
+    except KeyboardInterrupt:
+        manifest["status"] = "interrupted"
+        manifest["failure"] = {"stage": "classical_comparison", "reason": "keyboard_interrupt"}
+        manifest["completed_at"] = utc_now()
+        manifest["artifacts"] = artifact_inventory(results_dir)
+        write_manifest(manifest_path, manifest)
+        raise
     manifest["status"] = "completed"
     manifest["completed_at"] = utc_now()
     manifest["artifacts"] = artifact_inventory(results_dir)

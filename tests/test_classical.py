@@ -27,7 +27,10 @@ from thesis.classical.ddt_simon import (
     f_ddt_max_probability_per_input,
 )
 from thesis.classical.ddt_speck import compute_speck_round_ddt, highest_output_probability
-from thesis.classical.characteristic import max_characteristic_from_fixed_transition
+from thesis.classical.characteristic import (
+    max_characteristic_from_fixed_transition,
+    track_characteristic_over_rounds,
+)
 from thesis.data.generator import DEFAULT_INPUT_DELTA
 
 
@@ -86,3 +89,28 @@ def test_build_transition_matrix_keys_are_delta_pairs():
     t = build_transition_from_pairs(pairs)
     assert (0, 1) in t
     validate_probabilities(t[(0, 1)])
+
+
+def test_track_characteristic_reuses_one_round_traversal(monkeypatch):
+    calls = []
+
+    def fake_speck_row(delta_in, n_samples, *, seed):
+        calls.append((delta_in, seed))
+        return {delta_in: 0.5, (delta_in[0] ^ 1, delta_in[1]): 0.5}
+
+    monkeypatch.setattr(
+        "thesis.classical.characteristic.compute_speck_round_ddt",
+        fake_speck_row,
+    )
+    rows = track_characteristic_over_rounds(
+        "speck",
+        [2, 3],
+        DEFAULT_INPUT_DELTA,
+        n_samples_row=10,
+        top_k=1,
+        seed=7,
+    )
+
+    assert [row["rounds"] for row in rows] == [2, 3]
+    assert [row["max_characteristic_prob"] for row in rows] == [0.25, 0.125]
+    assert len(calls) == 1

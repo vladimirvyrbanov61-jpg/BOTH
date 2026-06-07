@@ -72,12 +72,39 @@ def compute_speck_round_ddt(
     n_samples: int = 1_000_000,
     *,
     seed: int = 0,
+    batch_size: int = 262_144,
 ) -> dict[Delta32, float]:
     """Empirical 1-round output distribution P(Δ_out | Δ_in) for Speck32/64 ARX round."""
+    if n_samples < 1:
+        raise ValueError("n_samples must be positive")
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+
     rng = np.random.default_rng(seed)
-    counts: dict[Delta32, int] = {}
-    for _, d_out in _sample_pairs(delta_in, n_samples, rng):
-        counts[d_out] = counts.get(d_out, 0) + 1
+    dx, dy = int(delta_in[0]) & WORD_MASK, int(delta_in[1]) & WORD_MASK
+    packed_counts: dict[int, int] = {}
+    for start in range(0, n_samples, batch_size):
+        size = min(batch_size, n_samples - start)
+        x = rng.integers(0, WORD_MASK + 1, size=size, dtype=np.uint16)
+        y = rng.integers(0, WORD_MASK + 1, size=size, dtype=np.uint16)
+        k = rng.integers(0, WORD_MASK + 1, size=size, dtype=np.uint16)
+        x2 = x ^ np.uint16(dx)
+        y2 = y ^ np.uint16(dy)
+
+        xo, yo = speck_enc_round_pair(x, y, k)
+        xo2, yo2 = speck_enc_round_pair(x2, y2, k)
+        packed = (
+            np.left_shift(np.bitwise_xor(xo, xo2).astype(np.uint32), 16)
+            | np.bitwise_xor(yo, yo2).astype(np.uint32)
+        )
+        values, frequencies = np.unique(packed, return_counts=True)
+        for value, frequency in zip(values.tolist(), frequencies.tolist()):
+            packed_counts[value] = packed_counts.get(value, 0) + frequency
+
+    counts = {
+        ((packed >> 16) & WORD_MASK, packed & WORD_MASK): count
+        for packed, count in packed_counts.items()
+    }
     probs = normalize_counts(counts)
     validate_probabilities(probs)
     return probs

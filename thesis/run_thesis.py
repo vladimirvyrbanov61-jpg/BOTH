@@ -103,6 +103,7 @@ def main() -> int:
             "tests/test_classical.py",
             "tests/test_round_sweep_smoke.py",
             "tests/test_aggregate.py",
+            "tests/test_compare_experiments.py",
         ]
         rc = _run_pytest(test_files, verbose=args.pytest_verbose)
         if rc != 0:
