@@ -25,6 +25,7 @@ from thesis.data.generator import (
     DEFAULT_INPUT_DELTA,
     generate_distinguisher_dataset,
     generate_or_load,
+    stratified_split_indices,
 )
 from thesis.data.cache import load_blind_npz
 
@@ -170,3 +171,10 @@ def test_generate_or_load_rejects_unbalanced_cache(tmp_path):
             seed=1,
             data_dir=tmp_path,
         )
+
+
+def test_stratified_split_rejects_non_binary_labels_and_negative_seed():
+    with pytest.raises(ValueError, match="binary"):
+        stratified_split_indices(np.array([0, 1, 2, 0, 1, 2]))
+    with pytest.raises(ValueError, match="seed"):
+        stratified_split_indices(np.array([0, 0, 0, 1, 1, 1]), seed=-1)

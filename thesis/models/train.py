@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 import numpy as np
 
+from ciphers.registry import max_rounds
 from thesis.eval.metrics import classification_metrics, select_validation_threshold
 from thesis.models.cnn_distinguisher import CnnDistinguisher, build_model
 
@@ -40,6 +41,8 @@ def _validate_train_config(cfg: "TrainConfig") -> None:
         raise ValueError("weight_decay must be finite and non-negative")
     if cfg.device not in {"auto", "cpu", "cuda"}:
         raise ValueError("device must be auto, cpu, or cuda")
+    if isinstance(cfg.seed, bool) or not isinstance(cfg.seed, int) or cfg.seed < 0:
+        raise ValueError("seed must be a non-negative integer")
     if len(cfg.channels) not in (2, 3) or any(
         isinstance(channel, bool) or not isinstance(channel, int) or channel < 1
         for channel in cfg.channels
@@ -176,8 +179,12 @@ def train_distinguisher(
     _validate_train_config(train_cfg)
     if cipher not in {"simon", "speck"}:
         raise ValueError(f"unsupported cipher {cipher!r}")
-    if rounds < 1:
-        raise ValueError("rounds must be positive")
+    if isinstance(rounds, bool) or not isinstance(rounds, int):
+        raise ValueError("rounds must be an integer")
+    if not 1 <= rounds <= max_rounds(cipher):
+        raise ValueError(
+            f"rounds must be in 1..{max_rounds(cipher)} for {cipher}"
+        )
     X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y)
     _validate_training_data(X, y, splits)
@@ -330,10 +337,25 @@ def load_distinguisher(
             "This project requires a PyTorch version with safe weights_only "
             "checkpoint loading support. Upgrade PyTorch and retry."
         ) from exc
-    channels = tuple(data.get("train_config", {}).get("channels", (32, 64, 128)))
+    if not isinstance(data, dict) or data.get("schema_version") != 2:
+        raise ValueError("unsupported or malformed checkpoint schema")
+    if not isinstance(data.get("state_dict"), dict):
+        raise ValueError("checkpoint is missing a state_dict")
+    train_config = data.get("train_config")
+    if not isinstance(train_config, dict):
+        raise ValueError("checkpoint is missing its training configuration")
+    channels = tuple(train_config.get("channels", (32, 64, 128)))
+    if len(channels) not in (2, 3) or any(
+        isinstance(channel, bool) or not isinstance(channel, int) or channel < 1
+        for channel in channels
+    ):
+        raise ValueError("checkpoint contains invalid CNN channels")
+    threshold = float(data.get("decision_threshold", 0.5))
+    if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("checkpoint contains an invalid decision threshold")
     model = build_model(channels).to(dev)
     model.load_state_dict(data["state_dict"])
-    model.decision_threshold = float(data.get("decision_threshold", 0.5))
+    model.decision_threshold = threshold
     model.checkpoint_metadata = data.get("experiment", {})
     model.eval()
     return model

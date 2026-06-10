@@ -98,6 +98,11 @@ def stratified_split_indices(
     val_ratio: float = 0.15,
     seed: int = 0,
 ) -> dict[str, np.ndarray]:
+    y = np.asarray(y)
+    if y.ndim != 1 or y.size == 0 or not np.isin(y, (0, 1)).all():
+        raise ValueError("y must be a non-empty binary vector")
+    if isinstance(seed, bool) or not isinstance(seed, (int, np.integer)) or seed < 0:
+        raise ValueError("seed must be a non-negative integer")
     if not 0.0 < train_ratio < 1.0:
         raise ValueError("train_ratio must be between 0 and 1")
     if not 0.0 < val_ratio < 1.0:

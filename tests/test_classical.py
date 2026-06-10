@@ -216,3 +216,7 @@ def test_classical_search_rejects_invalid_parameters():
         )
     with pytest.raises(ValueError, match="positive"):
         prune_top_k({DEFAULT_INPUT_DELTA: 1.0}, 0)
+    with pytest.raises(ValueError, match="top_k"):
+        max_trail_probability(DEFAULT_INPUT_DELTA, {}, 0, top_k=0)
+    with pytest.raises(ValueError, match="non-negative"):
+        normalize_counts({DEFAULT_INPUT_DELTA: 2, (0, 0): -1})

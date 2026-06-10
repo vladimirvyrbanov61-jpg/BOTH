@@ -133,6 +133,8 @@ def simon_round_transition_monte_carlo(
     If uniform_input_delta is False, samples only the fixed caller-provided
     workflow uses compute_simon_round_ddt; when True, also random Δ_in per sample.
     """
+    if n_samples < 1:
+        raise ValueError("n_samples must be positive")
     rng = np.random.default_rng(seed)
     pairs: list[tuple[Delta32, Delta32]] = []
 

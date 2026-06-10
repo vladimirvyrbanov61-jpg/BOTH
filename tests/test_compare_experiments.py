@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from thesis.config.loader import config_path_for_profile, load_config
-from thesis.eval.compare import run_compare
+from thesis.eval.compare import require_neural_overlap, run_compare
 from thesis.eval.compare_experiments import build_comparison_rows
 
 
@@ -77,4 +77,16 @@ def test_compare_rejects_duplicate_round_override(tmp_path) -> None:
             config_path_for_profile("quick"),
             rounds_list=[3, 3],
             results_dir=tmp_path,
+        )
+
+
+def test_compare_requires_every_requested_neural_round(tmp_path) -> None:
+    path = tmp_path / "simon_multi_seed_raw.csv"
+    path.touch()
+    with pytest.raises(ValueError, match=r"rounds \[4\]"):
+        require_neural_overlap(
+            "simon",
+            [3, 4],
+            {3: {"mean": 0.1, "ci95_low": 0.0, "ci95_high": 0.2}},
+            path,
         )

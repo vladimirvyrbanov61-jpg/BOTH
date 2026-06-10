@@ -26,10 +26,13 @@ def normalize_counts(counts: dict[T, int | float]) -> dict[T, float]:
     """Convert count histogram to probabilities in (0, 1]."""
     if not counts:
         return {}
-    total = float(sum(counts.values()))
+    values = np.asarray(list(counts.values()), dtype=np.float64)
+    if not np.isfinite(values).all() or (values < 0.0).any():
+        raise ValueError("counts must be finite and non-negative")
+    total = float(values.sum())
     if total <= 0:
-        return {}
-    out = {k: float(v) / total for k, v in counts.items()}
+        raise ValueError("counts must contain positive total mass")
+    out = {key: float(value) / total for key, value in counts.items() if value > 0}
     return out
 
 
@@ -61,6 +64,10 @@ def max_trail_probability(
     """Best trail retained by top-k max-product beam search."""
     if rounds < 0:
         raise ValueError("rounds must be non-negative")
+    if top_k < 1:
+        raise ValueError("top_k must be positive")
+    for row in transition.values():
+        validate_probabilities(row)
     if rounds == 0:
         return 1.0, [initial_delta]
 
@@ -123,6 +130,8 @@ def transition_row_monte_carlo(
     delta_in: Delta32,
     n_samples: int,
 ) -> dict[Delta32, float]:
+    if n_samples < 1:
+        raise ValueError("n_samples must be positive")
     pairs = list(sample_round_pairs(delta_in, n_samples))
     counts: dict[Delta32, int] = defaultdict(int)
     for _, d_out in pairs:

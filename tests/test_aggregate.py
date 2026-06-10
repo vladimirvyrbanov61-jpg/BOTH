@@ -69,3 +69,23 @@ def test_aggregate_rejects_non_finite_metrics() -> None:
     }
     with pytest.raises(ValueError, match="finite"):
         aggregate_rows([row])
+
+
+def test_aggregate_rejects_partial_seed_metric_rows() -> None:
+    row = {
+        "cipher": "simon",
+        "rounds": 3,
+        "split": "test",
+        "seed": 1,
+        "n_samples": 100,
+        "accuracy": 0.5,
+        "auc_roc": 0.5,
+        "tpr": 0.5,
+        "tnr": 0.5,
+        "accuracy_advantage": 0.0,
+        "advantage_edge": 0.0,
+        "auc_advantage": 0.0,
+        "accuracy_null_p_value": 1.0,
+    }
+    with pytest.raises(ValueError, match="Missing metrics.*youden_j"):
+        aggregate_rows([row])

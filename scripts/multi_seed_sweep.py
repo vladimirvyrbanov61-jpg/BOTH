@@ -25,23 +25,6 @@ from thesis.eval.manifest import (
 )
 from thesis.eval.plot_results import plot_all
 
-_TEST_FILES = [
-    "tests/test_cipher_kats.py",
-    "tests/test_thesis_encoding.py",
-    "tests/test_cnn.py",
-    "tests/test_classical.py",
-    "tests/test_round_sweep_smoke.py",
-    "tests/test_aggregate.py",
-    "tests/test_compare_experiments.py",
-    "tests/test_config_validation.py",
-    "tests/test_metrics.py",
-    "tests/test_cipher_profile_cache.py",
-    "Simon/test_simon.py",
-    "Speck/test_speck.py",
-    "Speck/test_speck3264.py",
-]
-
-
 def run_seed_sweep(
     seeds: list[int],
     profile: str = "full",
@@ -127,7 +110,7 @@ def run_seed_sweep(
     write_manifest(manifest_path, manifest)
 
     if not skip_tests:
-        test_cmd = [sys.executable, "-m", "pytest", *_TEST_FILES]
+        test_cmd = [sys.executable, "-m", "pytest"]
         print(f"[TEST GATE] {' '.join(test_cmd)}")
         ret = subprocess.call(test_cmd, cwd=str(_REPO_ROOT))
         if ret != 0:

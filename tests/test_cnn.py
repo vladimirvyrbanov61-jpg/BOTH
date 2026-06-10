@@ -89,6 +89,30 @@ def test_checkpoint_load_uses_tensor_only_mode(tmp_path):
     assert loaded.checkpoint_metadata["input_delta"] == [1, 0]
 
 
+@pytest.mark.parametrize(
+    ("update", "message"),
+    [
+        ({"schema_version": 1}, "schema"),
+        ({"decision_threshold": 1.5}, "threshold"),
+        ({"train_config": {"channels": (16, 0)}}, "channels"),
+    ],
+)
+def test_checkpoint_load_rejects_invalid_metadata(tmp_path, update, message):
+    model = build_model((16, 32))
+    payload = {
+        "schema_version": 2,
+        "state_dict": model.state_dict(),
+        "train_config": {"channels": (16, 32)},
+        "decision_threshold": 0.5,
+    }
+    payload.update(update)
+    checkpoint = tmp_path / "invalid.pt"
+    torch.save(payload, checkpoint)
+
+    with pytest.raises(ValueError, match=message):
+        load_distinguisher(checkpoint, device="cpu")
+
+
 def test_explicit_cuda_request_fails_clearly_without_cuda(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     with pytest.raises(RuntimeError, match="CUDA was requested"):
@@ -110,3 +134,5 @@ def test_training_rejects_overlapping_splits():
 def test_direct_training_config_is_validated():
     with pytest.raises(ValueError, match="epochs"):
         _validate_train_config(TrainConfig(epochs=0))
+    with pytest.raises(ValueError, match="seed"):
+        _validate_train_config(TrainConfig(seed=-1))

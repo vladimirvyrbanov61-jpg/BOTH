@@ -62,9 +62,11 @@ def require_neural_overlap(
             "  py -3 -m thesis.eval.round_sweep --profile quick --fresh-csv\n"
             "  py -3 -m thesis.run_thesis --profile quick"
         )
-    if not sorted(set(rounds) & set(neural)):
+    missing_rounds = sorted(set(rounds) - set(neural))
+    if missing_rounds:
         raise ValueError(
-            f"No test-split neural metrics for {cipher} at rounds {rounds} in {neural_path}."
+            f"Missing test-split neural metrics for {cipher} at rounds "
+            f"{missing_rounds} in {neural_path}."
         )
 
 

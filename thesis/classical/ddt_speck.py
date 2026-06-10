@@ -110,6 +110,8 @@ def speck_round_transition_monte_carlo(
     seed: int = 0,
 ) -> Dict[Delta32, Dict[Delta32, float]]:
     """Sparse round transition from random plaintexts, keys, and input differences."""
+    if n_samples < 1:
+        raise ValueError("n_samples must be positive")
     rng = np.random.default_rng(seed)
     pairs: list[tuple[Delta32, Delta32]] = []
     for _ in range(n_samples):

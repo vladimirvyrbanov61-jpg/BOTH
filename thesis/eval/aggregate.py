@@ -177,6 +177,25 @@ def aggregate_rows(
                 f"Duplicate seed rows for {cipher} round {rounds}; "
                 "start with --fresh-csv or remove duplicate runs before aggregation."
             )
+        for row in group:
+            seed = int(row["seed"])
+            n_samples = int(row["n_samples"])
+            if seed < 0:
+                raise ValueError(f"Invalid seed for {cipher} round {rounds}: {seed}")
+            if n_samples < 1:
+                raise ValueError(
+                    f"Invalid n_samples for {cipher} round {rounds}, seed {seed}"
+                )
+            missing = [
+                field
+                for field in (*METRICS, "accuracy_null_p_value")
+                if row.get(field) in (None, "")
+            ]
+            if missing:
+                raise ValueError(
+                    f"Missing metrics for {cipher} round {rounds}, seed {seed}: "
+                    f"{missing}"
+                )
         aggregate: dict[str, Any] = {
             "cipher": cipher,
             "rounds": rounds,
@@ -186,9 +205,7 @@ def aggregate_rows(
             "n_samples_total": sum(int(row["n_samples"]) for row in group),
         }
         for metric in METRICS:
-            values = [float(row[metric]) for row in group if row.get(metric) not in (None, "")]
-            if not values:
-                continue
+            values = [float(row[metric]) for row in group]
             for suffix, value in summarize_values(
                 values,
                 bounds=METRIC_BOUNDS[metric],
@@ -197,21 +214,19 @@ def aggregate_rows(
         p_values = [
             float(row["accuracy_null_p_value"])
             for row in group
-            if row.get("accuracy_null_p_value") not in (None, "")
         ]
-        if p_values:
-            if not all(
-                math.isfinite(value) and 0.0 <= value <= 1.0
-                for value in p_values
-            ):
-                raise ValueError(
-                    f"Invalid null p-value for {cipher} round {rounds}"
-                )
-            from scipy.stats import combine_pvalues
-
-            aggregate["accuracy_null_p_value_fisher"] = float(
-                combine_pvalues(p_values, method="fisher").pvalue
+        if not all(
+            math.isfinite(value) and 0.0 <= value <= 1.0
+            for value in p_values
+        ):
+            raise ValueError(
+                f"Invalid null p-value for {cipher} round {rounds}"
             )
+        from scipy.stats import combine_pvalues
+
+        aggregate["accuracy_null_p_value_fisher"] = float(
+            combine_pvalues(p_values, method="fisher").pvalue
+        )
         output.append(aggregate)
     return output
 
