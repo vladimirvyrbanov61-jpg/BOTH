@@ -115,6 +115,11 @@ def train_distinguisher(
     device = _resolve_device(train_cfg.device)
     torch.manual_seed(train_cfg.seed)
     np.random.seed(train_cfg.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(train_cfg.seed)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     model_dir = Path(model_dir)
     # New: seed-aware checkpoint path (prevents overwrites)
@@ -223,9 +228,12 @@ def load_distinguisher(
 
     dev = _resolve_device(device)
     try:
-        data = torch.load(path, map_location=dev, weights_only=False)
-    except TypeError:
-        data = torch.load(path, map_location=dev)
+        data = torch.load(path, map_location=dev, weights_only=True)
+    except TypeError as exc:
+        raise RuntimeError(
+            "This project requires a PyTorch version with safe weights_only "
+            "checkpoint loading support. Upgrade PyTorch and retry."
+        ) from exc
     channels = tuple(data.get("train_config", {}).get("channels", (32, 64, 128)))
     model = build_model(channels).to(dev)
     model.load_state_dict(data["state_dict"])

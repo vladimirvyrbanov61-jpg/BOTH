@@ -47,8 +47,15 @@ def generate_distinguisher_dataset(
     input_delta: tuple[int, int] = DEFAULT_INPUT_DELTA,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build balanced (X, y) with X shape (N, 64) float32, y in {0, 1}."""
-    if n_samples % 2 != 0:
-        raise ValueError("n_samples must be even for 50/50 balance")
+    if n_samples < 2 or n_samples % 2 != 0:
+        raise ValueError("n_samples must be a positive even number for 50/50 balance")
+    if len(input_delta) != 2 or any(
+        isinstance(word, bool)
+        or not isinstance(word, (int, np.integer))
+        or not 0 <= int(word) <= 0xFFFF
+        for word in input_delta
+    ):
+        raise ValueError("input_delta must contain exactly two 16-bit integer words")
     _validate_rounds(cipher_name, rounds)
 
     n_each = n_samples // 2
@@ -89,6 +96,12 @@ def stratified_split_indices(
     val_ratio: float = 0.15,
     seed: int = 0,
 ) -> dict[str, np.ndarray]:
+    if not 0.0 < train_ratio < 1.0:
+        raise ValueError("train_ratio must be between 0 and 1")
+    if not 0.0 < val_ratio < 1.0:
+        raise ValueError("val_ratio must be between 0 and 1")
+    if train_ratio + val_ratio >= 1.0:
+        raise ValueError("train_ratio + val_ratio must be less than 1")
     rng = np.random.default_rng(seed)
     train_idx: list[int] = []
     val_idx: list[int] = []
@@ -99,6 +112,11 @@ def stratified_split_indices(
         n = len(idx)
         n_tr = int(n * train_ratio)
         n_va = int(n * val_ratio)
+        if min(n_tr, n_va, n - n_tr - n_va) < 1:
+            raise ValueError(
+                "each class must contribute at least one train, validation, "
+                "and test sample"
+            )
         train_idx.extend(idx[:n_tr].tolist())
         val_idx.extend(idx[n_tr : n_tr + n_va].tolist())
         test_idx.extend(idx[n_tr + n_va :].tolist())

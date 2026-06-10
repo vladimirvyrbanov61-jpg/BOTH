@@ -23,6 +23,7 @@ from thesis.models.cnn_distinguisher import (
     CnnDistinguisher,
     build_model,
 )
+from thesis.models.train import load_distinguisher
 
 
 def test_bit_pair_reshape():
@@ -62,3 +63,18 @@ def test_train_config_from_dict():
     cfg = TrainConfig.from_dict({"epochs": 5, "channels": [16, 32, 64]})
     assert cfg.epochs == 5
     assert cfg.channels == (16, 32, 64)
+
+
+def test_checkpoint_load_uses_tensor_only_mode(tmp_path):
+    model = build_model((16, 32))
+    checkpoint = tmp_path / "model.pt"
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "train_config": {"channels": (16, 32)},
+        },
+        checkpoint,
+    )
+
+    loaded = load_distinguisher(checkpoint, device="cpu")
+    assert loaded.count_parameters() == model.count_parameters()

@@ -54,6 +54,14 @@ def config_digest(config: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_manifest(
     *,
     repo_root: Path,
@@ -65,7 +73,7 @@ def build_manifest(
 ) -> dict[str, Any]:
     created_at = utc_now()
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "run_type": run_type,
         "status": "running",
         "created_at": created_at,
@@ -91,7 +99,10 @@ def build_manifest(
         "statistics": {
             "grouping": ["cipher", "rounds", "split"],
             "dispersion": "sample standard deviation (ddof=1; zero for one seed)",
-            "error_bars": "95% normal confidence interval: mean +/- 1.96 * SEM",
+            "error_bars": (
+                "95% Student-t confidence interval across seeds; clipped to "
+                "the mathematical range of bounded metrics"
+            ),
         },
         "paths": {key: str(value) if value is not None else None for key, value in paths.items()},
         "progress": {"completed_seeds": [], "failed_seeds": []},
@@ -101,19 +112,32 @@ def build_manifest(
 
 def artifact_inventory(run_dir: Path) -> list[dict[str, Any]]:
     artifacts = []
-    for path in sorted(run_dir.glob("*")):
+    for path in sorted(run_dir.rglob("*")):
         if path.is_file() and path.name != "manifest.json":
             artifacts.append(
                 {
-                    "path": path.name,
+                    "path": path.relative_to(run_dir).as_posix(),
                     "bytes": path.stat().st_size,
                     "type": path.suffix.lstrip(".") or "file",
+                    "sha256": file_digest(path),
                 }
             )
     return artifacts
 
 
 def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
+    manifest["schema_version"] = 3
+    statistics = manifest.setdefault("statistics", {})
+    statistics.update(
+        {
+            "grouping": ["cipher", "rounds", "split"],
+            "dispersion": "sample standard deviation (ddof=1; zero for one seed)",
+            "error_bars": (
+                "95% Student-t confidence interval across seeds; clipped to "
+                "the mathematical range of bounded metrics"
+            ),
+        }
+    )
     manifest["updated_at"] = utc_now()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:

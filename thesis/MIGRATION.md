@@ -37,13 +37,14 @@
 
 **Architectural pivot: complete.** Thesis path is self-contained under `thesis/` + `ciphers/common/`.
 
-## Legacy (unchanged, not imported by thesis/)
+## Legacy (archived, not imported by thesis/)
 
 | Path | Disposition |
 |------|-------------|
-| `Simon/ml/**`, `Speck/ml/**` | Fault / AE pipeline — archive later |
-| `Simon/simon3264/faults.py`, `dataset.py` | Fault injection |
-| `Simon/experiments/distinguisher_data.py` | Superseded by `thesis/data/generator.py` |
+| `Archieve/LegacyPipelines/{Simon,Speck}/ml/**` | Historical fault / AE pipeline |
+| `Archieve/LegacyPipelines/Simon/simon3264_utilities/**` | Historical SIMON fault, trace, encoding, and dataset helpers |
+| `Archieve/LegacyPipelines/Speck/speck3264_utilities/**` | Historical SPECK fault, encoding, and dataset helpers |
+| `Archieve/LegacyPipelines/{Simon,Speck}/experiments/**` | Superseded binary-distinguisher pipeline |
 
 ## Import graph (thesis)
 

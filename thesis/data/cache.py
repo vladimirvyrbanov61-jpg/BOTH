@@ -46,9 +46,21 @@ def cache_path(
 
 
 def save_blind_npz(path: Path, X: np.ndarray, y: np.ndarray, rounds: int) -> None:
-    """Persist only features and labels — no plaintexts or keys."""
+    """Persist only features and labels, atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, X=X.astype(np.float32), y=y.astype(np.int8), rounds=np.array([rounds]))
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "wb") as handle:
+            np.savez_compressed(
+                handle,
+                X=X.astype(np.float32),
+                y=y.astype(np.int8),
+                rounds=np.array([rounds], dtype=np.int64),
+            )
+        temporary.replace(path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def load_blind_npz(path: Path) -> dict[str, Any]:
@@ -57,4 +69,21 @@ def load_blind_npz(path: Path) -> dict[str, Any]:
         for name in data.files:
             if name.lower() in forbidden or name.startswith("P_") or name.startswith("K_"):
                 raise ValueError(f"cache leak: unexpected array {name!r} in {path}")
-        return {k: data[k] for k in data.files}
+        expected = {"X", "y", "rounds"}
+        if set(data.files) != expected:
+            raise ValueError(
+                f"cache schema mismatch in {path}: expected {sorted(expected)}, "
+                f"found {sorted(data.files)}"
+            )
+        loaded = {key: data[key] for key in data.files}
+
+    X = loaded["X"]
+    y = loaded["y"]
+    rounds = loaded["rounds"]
+    if X.ndim != 2 or X.shape[1] != 64 or X.dtype != np.float32:
+        raise ValueError(f"invalid feature tensor in cache {path}: {X.shape}, {X.dtype}")
+    if y.ndim != 1 or len(y) != len(X) or not np.isin(y, (0, 1)).all():
+        raise ValueError(f"invalid labels in cache {path}")
+    if rounds.shape != (1,) or int(rounds[0]) < 1:
+        raise ValueError(f"invalid round metadata in cache {path}")
+    return loaded

@@ -1,0 +1,19 @@
+# Python caches and test state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local Python environments
+.venv/
+venv/
+
+# IDE and editor state
+.idea/
+.vscode/
+state.vscdb
+
+# Regenerable experiment artifacts
+thesis/data/cache/
+models/
+runs/
+

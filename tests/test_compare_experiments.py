@@ -22,12 +22,39 @@ def _aggregate(mean: float, low: float, high: float) -> dict[str, float]:
 def test_build_comparison_rows_detects_interval_overlap() -> None:
     baseline = {"simon": {3: _aggregate(0.8, 0.75, 0.85)}}
     candidate = {"simon": {3: _aggregate(0.9, 0.86, 0.94)}}
+    baseline_raw = {
+        "simon": {
+            3: {
+                1: {"auc_roc": 0.78},
+                2: {"auc_roc": 0.82},
+                3: {"auc_roc": 0.80},
+            }
+        }
+    }
+    candidate_raw = {
+        "simon": {
+            3: {
+                1: {"auc_roc": 0.88},
+                2: {"auc_roc": 0.92},
+                3: {"auc_roc": 0.90},
+            }
+        }
+    }
 
-    rows = build_comparison_rows(baseline, candidate, metrics=("auc_roc",))
+    rows = build_comparison_rows(
+        baseline,
+        candidate,
+        metrics=("auc_roc",),
+        baseline_raw=baseline_raw,
+        candidate_raw=candidate_raw,
+    )
 
     assert len(rows) == 1
     assert rows[0]["mean_difference"] == pytest.approx(0.1)
     assert rows[0]["ci95_overlap"] is False
+    assert rows[0]["paired_n"] == 3
+    assert rows[0]["paired_difference_mean"] == pytest.approx(0.1)
+    assert rows[0]["paired_difference_excludes_zero"] is True
 
 
 def test_delta_profile_only_changes_controlled_fields() -> None:

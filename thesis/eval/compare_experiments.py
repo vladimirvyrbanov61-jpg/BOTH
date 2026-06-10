@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
-from thesis.eval.aggregate import aggregate_csv
+from thesis.eval.aggregate import aggregate_csv, read_metric_rows, summarize_values
 
 COMPARISON_FIELDS = [
     "cipher",
@@ -26,6 +26,11 @@ COMPARISON_FIELDS = [
     "candidate_ci95_high",
     "mean_difference",
     "ci95_overlap",
+    "paired_n",
+    "paired_difference_mean",
+    "paired_difference_ci95_low",
+    "paired_difference_ci95_high",
+    "paired_difference_excludes_zero",
 ]
 
 
@@ -85,11 +90,52 @@ def _load_aggregates(
     return output
 
 
+def _load_raw_metrics(
+    run_dir: Path,
+    ciphers: list[str],
+    expected_seeds: list[int],
+    expected_rounds: list[int],
+) -> dict[str, dict[int, dict[int, dict[str, Any]]]]:
+    output: dict[str, dict[int, dict[int, dict[str, Any]]]] = {}
+    expected_seed_set = set(expected_seeds)
+    for cipher in ciphers:
+        by_round: dict[int, dict[int, dict[str, Any]]] = {}
+        for row in read_metric_rows(run_dir / f"{cipher}_multi_seed_raw.csv"):
+            if row.get("split", "test") != "test":
+                continue
+            rounds = int(row["rounds"])
+            seed = int(row["seed"])
+            if rounds not in expected_rounds:
+                continue
+            seed_rows = by_round.setdefault(rounds, {})
+            if seed in seed_rows:
+                raise ValueError(
+                    f"Duplicate seed {seed} for {cipher} round {rounds} in {run_dir}"
+                )
+            seed_rows[seed] = row
+
+        if sorted(by_round) != expected_rounds:
+            raise ValueError(
+                f"{cipher} raw results in {run_dir} have rounds {sorted(by_round)}, "
+                f"expected {expected_rounds}"
+            )
+        for rounds, seed_rows in by_round.items():
+            if set(seed_rows) != expected_seed_set:
+                raise ValueError(
+                    f"{cipher} round {rounds} in {run_dir} has seeds "
+                    f"{sorted(seed_rows)}, expected {expected_seeds}"
+                )
+        output[cipher] = by_round
+    return output
+
+
 def build_comparison_rows(
     baseline: dict[str, dict[int, dict[str, Any]]],
     candidate: dict[str, dict[int, dict[str, Any]]],
     *,
     metrics: tuple[str, ...] = ("auc_roc", "advantage_abs"),
+    baseline_raw: dict[str, dict[int, dict[int, dict[str, Any]]]] | None = None,
+    candidate_raw: dict[str, dict[int, dict[int, dict[str, Any]]]] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for cipher in sorted(baseline):
@@ -103,21 +149,49 @@ def build_comparison_rows(
                 new_high = float(new[f"{metric}_ci95_high"])
                 base_mean = float(base[f"{metric}_mean"])
                 new_mean = float(new[f"{metric}_mean"])
-                rows.append(
-                    {
-                        "cipher": cipher,
-                        "rounds": rounds,
-                        "metric": metric,
-                        "baseline_mean": base_mean,
-                        "baseline_ci95_low": base_low,
-                        "baseline_ci95_high": base_high,
-                        "candidate_mean": new_mean,
-                        "candidate_ci95_low": new_low,
-                        "candidate_ci95_high": new_high,
-                        "mean_difference": new_mean - base_mean,
-                        "ci95_overlap": max(base_low, new_low) <= min(base_high, new_high),
-                    }
-                )
+                comparison: dict[str, Any] = {
+                    "cipher": cipher,
+                    "rounds": rounds,
+                    "metric": metric,
+                    "baseline_mean": base_mean,
+                    "baseline_ci95_low": base_low,
+                    "baseline_ci95_high": base_high,
+                    "candidate_mean": new_mean,
+                    "candidate_ci95_low": new_low,
+                    "candidate_ci95_high": new_high,
+                    "mean_difference": new_mean - base_mean,
+                    "ci95_overlap": max(base_low, new_low) <= min(base_high, new_high),
+                    "paired_n": "",
+                    "paired_difference_mean": "",
+                    "paired_difference_ci95_low": "",
+                    "paired_difference_ci95_high": "",
+                    "paired_difference_excludes_zero": "",
+                }
+                if baseline_raw is not None and candidate_raw is not None:
+                    base_seed_rows = baseline_raw[cipher][rounds]
+                    candidate_seed_rows = candidate_raw[cipher][rounds]
+                    if set(base_seed_rows) != set(candidate_seed_rows):
+                        raise ValueError(
+                            f"Paired seed mismatch for {cipher} round {rounds}"
+                        )
+                    differences = [
+                        float(candidate_seed_rows[seed][metric])
+                        - float(base_seed_rows[seed][metric])
+                        for seed in sorted(base_seed_rows)
+                    ]
+                    paired = summarize_values(differences)
+                    comparison.update(
+                        {
+                            "paired_n": len(differences),
+                            "paired_difference_mean": paired["mean"],
+                            "paired_difference_ci95_low": paired["ci95_low"],
+                            "paired_difference_ci95_high": paired["ci95_high"],
+                            "paired_difference_excludes_zero": (
+                                paired["ci95_low"] > 0.0 or paired["ci95_high"] < 0.0
+                            ),
+                        }
+                    )
+                rows.append(comparison)
     return rows
 
 
@@ -197,7 +271,14 @@ def compare_experiments(
     )
     baseline = _load_aggregates(baseline_dir, ciphers, len(seeds), rounds)
     candidate = _load_aggregates(candidate_dir, ciphers, len(seeds), rounds)
-    rows = build_comparison_rows(baseline, candidate)
+    baseline_raw = _load_raw_metrics(baseline_dir, ciphers, seeds, rounds)
+    candidate_raw = _load_raw_metrics(candidate_dir, ciphers, seeds, rounds)
+    rows = build_comparison_rows(
+        baseline,
+        candidate,
+        baseline_raw=baseline_raw,
+        candidate_raw=candidate_raw,
+    )
 
     csv_path = output_dir / "input_delta_comparison.csv"
     _write_csv(csv_path, rows)

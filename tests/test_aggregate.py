@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from thesis.eval.aggregate import aggregate_rows
+from thesis.eval.aggregate import aggregate_rows, student_t_critical_95
 
 
 def test_aggregate_rows_reports_sample_uncertainty() -> None:
@@ -36,3 +36,9 @@ def test_aggregate_rows_reports_sample_uncertainty() -> None:
     assert row["accuracy_mean"] == pytest.approx(0.7)
     assert row["accuracy_std"] == pytest.approx(2**0.5 / 10)
     assert row["accuracy_ci95_low"] < row["accuracy_mean"] < row["accuracy_ci95_high"]
+    assert row["accuracy_ci95_low"] == 0.0
+    assert row["accuracy_ci95_high"] == 1.0
+
+
+def test_ten_seed_interval_uses_student_t() -> None:
+    assert student_t_critical_95(10) == pytest.approx(2.262)

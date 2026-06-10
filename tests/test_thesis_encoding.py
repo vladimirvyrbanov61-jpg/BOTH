@@ -20,6 +20,7 @@ from thesis.data.generator import (
     generate_distinguisher_dataset,
     generate_or_load,
 )
+from thesis.data.cache import load_blind_npz
 
 
 def test_concat_pair_bits_shape_and_values():
@@ -88,3 +89,17 @@ def test_npz_cache_has_no_secrets(tmp_path):
     with np.load(out["cache_path"], allow_pickle=False) as z:
         assert set(z.files) <= {"X", "y", "rounds"}
     assert "X" in out and "y" in out
+
+
+def test_cache_schema_rejects_unexpected_arrays(tmp_path):
+    path = tmp_path / "invalid.npz"
+    np.savez_compressed(
+        path,
+        X=np.zeros((2, 64), dtype=np.float32),
+        y=np.array([0, 1], dtype=np.int8),
+        rounds=np.array([3]),
+        key=np.array([1]),
+    )
+
+    with pytest.raises(ValueError, match="cache leak"):
+        load_blind_npz(path)

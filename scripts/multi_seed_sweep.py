@@ -19,12 +19,14 @@ from thesis.eval.manifest import artifact_inventory, build_manifest, utc_now, wr
 from thesis.eval.plot_results import plot_all
 
 _TEST_FILES = [
+    "tests/test_cipher_kats.py",
     "tests/test_thesis_encoding.py",
     "tests/test_cnn.py",
     "tests/test_classical.py",
     "tests/test_round_sweep_smoke.py",
     "tests/test_aggregate.py",
     "tests/test_compare_experiments.py",
+    "tests/test_config_validation.py",
 ]
 
 
@@ -71,7 +73,7 @@ def run_seed_sweep(
         configured_results = Path(resolved_config.get("results_dir", "results/thesis"))
         if not configured_results.is_absolute():
             configured_results = _REPO_ROOT / configured_results
-        results_dir = configured_results / f"run_{datetime.now():%Y%m%d_%H%M%S}"
+        results_dir = configured_results / f"run_{datetime.now():%Y%m%d_%H%M%S_%f}"
     results_dir.mkdir(parents=True, exist_ok=True)
     cipher_names = ciphers or resolved_config.get("ciphers") or ["simon", "speck"]
     manifest_path = results_dir / "manifest.json"
@@ -165,12 +167,23 @@ def run_seed_sweep(
         write_manifest(manifest_path, manifest)
         print(f"\n[SEED {seed}] Completed successfully.\n")
 
-    plot_all(results_dir, list(cipher_names))
     try:
+        plot_all(results_dir, list(cipher_names))
         run_compare(config_path, ciphers=list(cipher_names), results_dir=results_dir)
     except KeyboardInterrupt:
         manifest["status"] = "interrupted"
         manifest["failure"] = {"stage": "classical_comparison", "reason": "keyboard_interrupt"}
+        manifest["completed_at"] = utc_now()
+        manifest["artifacts"] = artifact_inventory(results_dir)
+        write_manifest(manifest_path, manifest)
+        raise
+    except Exception as exc:
+        manifest["status"] = "failed"
+        manifest["failure"] = {
+            "stage": "plot_or_classical_comparison",
+            "error_type": type(exc).__name__,
+            "reason": str(exc),
+        }
         manifest["completed_at"] = utc_now()
         manifest["artifacts"] = artifact_inventory(results_dir)
         write_manifest(manifest_path, manifest)

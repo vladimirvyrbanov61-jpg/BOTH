@@ -46,7 +46,7 @@ def _resolve_path(base: Path, value: str) -> Path:
 
 def _create_timestamped_run_dir(base_results_path: Path) -> Path:
     """Create a timestamped results directory for experimental hygiene."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     run_dir = base_results_path / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir

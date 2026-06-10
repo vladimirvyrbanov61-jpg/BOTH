@@ -19,6 +19,49 @@ METRICS = (
     "youden_j",
 )
 
+METRIC_BOUNDS: dict[str, tuple[float, float]] = {
+    "accuracy": (0.0, 1.0),
+    "auc_roc": (0.0, 1.0),
+    "tpr": (0.0, 1.0),
+    "tnr": (0.0, 1.0),
+    "advantage_abs": (0.0, 0.5),
+    "advantage_edge": (0.0, 1.0),
+    "youden_j": (-1.0, 1.0),
+}
+
+_T_CRITICAL_95 = (
+    12.706,
+    4.303,
+    3.182,
+    2.776,
+    2.571,
+    2.447,
+    2.365,
+    2.306,
+    2.262,
+    2.228,
+    2.201,
+    2.179,
+    2.160,
+    2.145,
+    2.131,
+    2.120,
+    2.110,
+    2.101,
+    2.093,
+    2.086,
+    2.080,
+    2.074,
+    2.069,
+    2.064,
+    2.060,
+    2.056,
+    2.052,
+    2.048,
+    2.045,
+    2.042,
+)
+
 AGGREGATE_FIELDS = [
     "cipher",
     "rounds",
@@ -41,18 +84,39 @@ def read_metric_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def _summary(values: list[float]) -> dict[str, float]:
+def student_t_critical_95(n_samples: int) -> float:
+    """Two-sided 95% Student-t critical value for a sample mean."""
+    if n_samples <= 1:
+        return 0.0
+    degrees_of_freedom = n_samples - 1
+    if degrees_of_freedom <= len(_T_CRITICAL_95):
+        return _T_CRITICAL_95[degrees_of_freedom - 1]
+    return 1.96
+
+
+def summarize_values(
+    values: list[float],
+    *,
+    bounds: tuple[float, float] | None = None,
+) -> dict[str, float]:
     array = np.asarray(values, dtype=np.float64)
+    if array.size == 0:
+        raise ValueError("cannot summarize an empty sample")
     mean = float(array.mean())
     std = float(array.std(ddof=1)) if len(array) > 1 else 0.0
     sem = std / math.sqrt(len(array)) if len(array) > 1 else 0.0
-    margin = 1.96 * sem
+    margin = student_t_critical_95(len(array)) * sem
+    ci_low = mean - margin
+    ci_high = mean + margin
+    if bounds is not None:
+        ci_low = max(bounds[0], ci_low)
+        ci_high = min(bounds[1], ci_high)
     return {
         "mean": mean,
         "std": std,
         "sem": sem,
-        "ci95_low": mean - margin,
-        "ci95_high": mean + margin,
+        "ci95_low": ci_low,
+        "ci95_high": ci_high,
         "min": float(array.min()),
         "max": float(array.max()),
     }
@@ -90,7 +154,10 @@ def aggregate_rows(
             values = [float(row[metric]) for row in group if row.get(metric) not in (None, "")]
             if not values:
                 continue
-            for suffix, value in _summary(values).items():
+            for suffix, value in summarize_values(
+                values,
+                bounds=METRIC_BOUNDS[metric],
+            ).items():
                 aggregate[f"{metric}_{suffix}"] = value
         output.append(aggregate)
     return output
