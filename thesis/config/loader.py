@@ -77,6 +77,8 @@ def validate_config(data: dict[str, Any], *, source: Path | str = "<config>") ->
         value = _integer(word, f"{label}: input_delta[{index}]")
         if value > 0xFFFF:
             raise ValueError(f"{label}: input_delta[{index}] must be <= 0xffff")
+    if not any(int(word) for word in delta):
+        raise ValueError(f"{label}: input_delta must be nonzero")
 
     sample_count = _integer(
         data.get("n_samples_per_round"),

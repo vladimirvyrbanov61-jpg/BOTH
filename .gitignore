@@ -14,9 +14,9 @@ venv/
 state.vscdb
 
 # Regenerable experiment artifacts
-thesis/data/cache/
-models/
-runs/
+/thesis/data/cache/
+/models/
+/runs/
 *.pt
 *.pth
 *.npz

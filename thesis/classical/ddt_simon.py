@@ -110,6 +110,8 @@ def compute_simon_round_ddt(
     random_key: bool = True,
 ) -> dict[Delta32, float]:
     """Empirical 1-round output distribution P(Δ_out | Δ_in) for Simon32/64."""
+    if n_samples < 1:
+        raise ValueError("n_samples must be positive")
     rng = np.random.default_rng(seed)
     counts: dict[Delta32, int] = {}
     for _, d_out in _sample_pairs(delta_in, n_samples, rng, random_key=random_key):
@@ -162,11 +164,11 @@ def simon_round_transition_monte_carlo(
     return build_transition_from_pairs(pairs)
 
 
-def analytical_round_bound_from_f(
+def analytical_round_distribution_from_f(
     delta_in: Delta32,
     f_ddt: Dict[int, Dict[int, float]],
 ) -> dict[Delta32, float]:
-    """Key-free Simon round bound via exact f-DDT and Feistel swap (k cancels on pairs).
+    """Exact key-free SIMON round distribution from the f-DDT and Feistel swap.
 
     For fixed (dx, dy): dx_out = dy ⊕ β, dy_out = dx where β = f(x)⊕f(x⊕dx).
     Averages uniformly over β according to f-DDT[dx].
@@ -179,3 +181,7 @@ def analytical_round_bound_from_f(
         out[d_out] = out.get(d_out, 0.0) + p_beta
     validate_probabilities(out)
     return out
+
+
+# Compatibility alias for the pre-schema-3 name.
+analytical_round_bound_from_f = analytical_round_distribution_from_f

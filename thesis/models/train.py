@@ -27,6 +27,26 @@ def _resolve_device(device: str) -> str:
     return device
 
 
+def _validate_train_config(cfg: "TrainConfig") -> None:
+    if cfg.epochs < 1:
+        raise ValueError("epochs must be positive")
+    if cfg.batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    if cfg.patience < 1:
+        raise ValueError("patience must be positive")
+    if not np.isfinite(cfg.lr) or cfg.lr <= 0.0:
+        raise ValueError("lr must be finite and positive")
+    if not np.isfinite(cfg.weight_decay) or cfg.weight_decay < 0.0:
+        raise ValueError("weight_decay must be finite and non-negative")
+    if cfg.device not in {"auto", "cpu", "cuda"}:
+        raise ValueError("device must be auto, cpu, or cuda")
+    if len(cfg.channels) not in (2, 3) or any(
+        isinstance(channel, bool) or not isinstance(channel, int) or channel < 1
+        for channel in cfg.channels
+    ):
+        raise ValueError("channels must contain two or three positive integers")
+
+
 @dataclass
 class TrainConfig:
     epochs: int = 80
@@ -49,6 +69,41 @@ class TrainConfig:
 
 def _index_subset(X: np.ndarray, y: np.ndarray, idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return X[idx], y[idx]
+
+
+def _validate_training_data(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: dict[str, np.ndarray],
+) -> None:
+    if X.ndim != 2 or X.shape[1] != 64 or not np.isfinite(X).all():
+        raise ValueError("X must be a finite (N, 64) feature matrix")
+    if not np.isin(X, (0.0, 1.0)).all():
+        raise ValueError("X must contain binary ciphertext features")
+    if y.ndim != 1 or len(y) != len(X) or not np.isin(y, (0, 1)).all():
+        raise ValueError("y must be a binary vector aligned with X")
+    expected_names = {"train", "val", "test"}
+    if set(splits) != expected_names:
+        raise ValueError(f"splits must contain exactly {sorted(expected_names)}")
+
+    seen: set[int] = set()
+    for name in ("train", "val", "test"):
+        indices = np.asarray(splits[name])
+        if indices.ndim != 1 or indices.size == 0 or indices.dtype.kind not in "iu":
+            raise ValueError(f"{name} split must be a non-empty integer vector")
+        values = [int(index) for index in indices]
+        if min(values) < 0 or max(values) >= len(y):
+            raise ValueError(f"{name} split contains out-of-range indices")
+        if len(set(values)) != len(values):
+            raise ValueError(f"{name} split contains duplicate indices")
+        overlap = seen.intersection(values)
+        if overlap:
+            raise ValueError(f"data leakage: {name} split overlaps an earlier split")
+        if set(np.unique(y[indices])) != {0, 1}:
+            raise ValueError(f"{name} split must contain both classes")
+        seen.update(values)
+    if len(seen) != len(y):
+        raise ValueError("splits must partition every sample exactly once")
 
 
 def _batch_iter(
@@ -118,6 +173,14 @@ def train_distinguisher(
     import torch.nn as nn
 
     train_cfg = cfg or TrainConfig()
+    _validate_train_config(train_cfg)
+    if cipher not in {"simon", "speck"}:
+        raise ValueError(f"unsupported cipher {cipher!r}")
+    if rounds < 1:
+        raise ValueError("rounds must be positive")
+    X = np.asarray(X, dtype=np.float32)
+    y = np.asarray(y)
+    _validate_training_data(X, y, splits)
     device = _resolve_device(train_cfg.device)
     random.seed(train_cfg.seed)
     torch.manual_seed(train_cfg.seed)

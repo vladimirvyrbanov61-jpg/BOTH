@@ -131,6 +131,12 @@ def summarize_values(
     array = np.asarray(values, dtype=np.float64)
     if array.size == 0:
         raise ValueError("cannot summarize an empty sample")
+    if not np.isfinite(array).all():
+        raise ValueError("summary values must be finite")
+    if bounds is not None and not (
+        ((bounds[0] <= array) & (array <= bounds[1])).all()
+    ):
+        raise ValueError(f"summary values must be within {bounds}")
     mean = float(array.mean())
     std = float(array.std(ddof=1)) if len(array) > 1 else 0.0
     sem = std / math.sqrt(len(array)) if len(array) > 1 else 0.0
@@ -194,6 +200,13 @@ def aggregate_rows(
             if row.get("accuracy_null_p_value") not in (None, "")
         ]
         if p_values:
+            if not all(
+                math.isfinite(value) and 0.0 <= value <= 1.0
+                for value in p_values
+            ):
+                raise ValueError(
+                    f"Invalid null p-value for {cipher} round {rounds}"
+                )
             from scipy.stats import combine_pvalues
 
             aggregate["accuracy_null_p_value_fisher"] = float(

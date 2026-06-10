@@ -19,6 +19,8 @@ PAIR_BITS = 64
 
 def block_to_bits(words: np.ndarray, n: int = WORD_BITS) -> np.ndarray:
     """One block (2,) uint16 → (32,) uint8 bits in {0, 1}."""
+    if n != WORD_BITS:
+        raise ValueError(f"32/64 profiles require n={WORD_BITS}, got {n}")
     w = np.asarray(words, dtype=np.uint16).reshape(2)
     bits = np.empty(BLOCK_BITS, dtype=np.uint8)
     for i, word in enumerate(w):
@@ -30,6 +32,8 @@ def block_to_bits(words: np.ndarray, n: int = WORD_BITS) -> np.ndarray:
 
 def blocks_to_bits(blocks: np.ndarray, n: int = WORD_BITS) -> np.ndarray:
     """(N, 2) uint16 → (N, 32) uint8 bits."""
+    if n != WORD_BITS:
+        raise ValueError(f"32/64 profiles require n={WORD_BITS}, got {n}")
     b = np.asarray(blocks, dtype=np.uint16)
     if b.ndim != 2 or b.shape[1] != 2:
         raise ValueError(f"blocks must be (N, 2), got {b.shape}")
@@ -83,6 +87,8 @@ def reshape_for_cnn(x: np.ndarray, layout: str = "1x64") -> np.ndarray:
     x = np.asarray(x, dtype=np.float32)
     if x.ndim == 1:
         x = x[np.newaxis, :]
+    if x.ndim != 2 or x.shape[1] != PAIR_BITS:
+        raise ValueError(f"expected (N, {PAIR_BITS}) features, got {x.shape}")
     if layout == "1x64":
         return x[:, np.newaxis, :]
     if layout == "4x16":

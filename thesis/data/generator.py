@@ -56,6 +56,8 @@ def generate_distinguisher_dataset(
         for word in input_delta
     ):
         raise ValueError("input_delta must contain exactly two 16-bit integer words")
+    if not any(int(word) for word in input_delta):
+        raise ValueError("input_delta must be nonzero")
     _validate_rounds(cipher_name, rounds)
 
     n_each = n_samples // 2

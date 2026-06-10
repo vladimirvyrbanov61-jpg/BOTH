@@ -6,14 +6,17 @@ import csv
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
+
 from thesis.classical.ddt_core import (
     Delta32,
+    WORD_MASK,
     max_trail_probability,
     prune_top_k,
     row_from_conditional,
 )
 from thesis.classical.ddt_simon import (
-    analytical_round_bound_from_f,
+    analytical_round_distribution_from_f,
     compute_f_ddt_exact,
     compute_simon_round_ddt,
 )
@@ -23,6 +26,32 @@ CipherName = Literal["simon", "speck"]
 CLASSICAL_SCHEMA_VERSION = 3
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _validate_search_inputs(
+    cipher: str,
+    delta_in: Delta32,
+    *,
+    top_k: int,
+    n_samples_row: int | None,
+) -> None:
+    if cipher not in {"simon", "speck"}:
+        raise ValueError(f"unsupported cipher {cipher!r}")
+    if (
+        not isinstance(delta_in, tuple)
+        or len(delta_in) != 2
+        or any(
+            isinstance(word, bool)
+            or not isinstance(word, (int, np.integer))
+            or not 0 <= int(word) <= WORD_MASK
+            for word in delta_in
+        )
+    ):
+        raise ValueError("delta_in must contain exactly two 16-bit integer words")
+    if top_k < 1:
+        raise ValueError("top_k must be positive")
+    if n_samples_row is not None and n_samples_row < 1:
+        raise ValueError("n_samples_row must be positive")
 
 
 def _expand_transition_rows(
@@ -37,7 +66,10 @@ def _expand_transition_rows(
     if delta_in in transition_cache:
         return
     if cipher == "simon" and f_ddt_simon is not None:
-        transition_cache[delta_in] = analytical_round_bound_from_f(delta_in, f_ddt_simon)
+        transition_cache[delta_in] = analytical_round_distribution_from_f(
+            delta_in,
+            f_ddt_simon,
+        )
     elif cipher == "simon":
         transition_cache[delta_in] = compute_simon_round_ddt(
             delta_in, n_samples=n_samples_row, seed=seed
@@ -64,7 +96,15 @@ def estimate_max_characteristic_probability(
     pruning makes the multi-round search non-exhaustive. The returned value is
     a beam-search estimate, not a formal probability bound.
     """
-    if rounds < 1:
+    _validate_search_inputs(
+        cipher,
+        delta_in,
+        top_k=top_k,
+        n_samples_row=n_samples_row,
+    )
+    if rounds < 0:
+        raise ValueError("rounds must be non-negative")
+    if rounds == 0:
         return 1.0, [delta_in]
 
     if n_samples_row is None:
@@ -135,6 +175,14 @@ def track_characteristic_over_rounds(
     top_k: int = 32,
     seed: int = 0,
 ) -> list[dict[str, Any]]:
+    _validate_search_inputs(
+        cipher,
+        delta_in,
+        top_k=top_k,
+        n_samples_row=n_samples_row,
+    )
+    if len(set(round_list)) != len(round_list):
+        raise ValueError("round counts must not contain duplicates")
     requested_rounds = sorted(set(round_list))
     if not requested_rounds:
         return []

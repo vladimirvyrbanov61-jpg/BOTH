@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from thesis.config.loader import config_path_for_profile, load_config
+from thesis.eval.compare import run_compare
 from thesis.eval.compare_experiments import build_comparison_rows
 
 
@@ -68,3 +69,12 @@ def test_delta_profile_only_changes_controlled_fields() -> None:
 
     assert changed == {"input_delta", "model_dir", "results_dir"}
     assert candidate["input_delta"] == [0x0040, 0]
+
+
+def test_compare_rejects_duplicate_round_override(tmp_path) -> None:
+    with pytest.raises(ValueError, match="duplicates"):
+        run_compare(
+            config_path_for_profile("quick"),
+            rounds_list=[3, 3],
+            results_dir=tmp_path,
+        )

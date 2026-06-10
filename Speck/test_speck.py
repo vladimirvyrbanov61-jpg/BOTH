@@ -17,6 +17,7 @@ class TestSpeckParamsTable:
         [
             (16, 4, 7, 2, 22),
             (24, 3, 8, 3, 22),
+            (24, 4, 8, 3, 23),
             (32, 3, 8, 3, 26),
             (32, 4, 8, 3, 27),
             (48, 2, 8, 3, 28),
@@ -33,6 +34,12 @@ class TestSpeckParamsTable:
         assert c.alpha == alpha
         assert c.beta == beta
         assert c.rounds == rounds
+
+    def test_invalid_round_and_rotation_parameters_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="rounds"):
+            Speck(n=16, m=4, rounds=0)
+        with pytest.raises(ValueError, match="alpha"):
+            Speck(n=16, m=4, alpha=0)
 
 
 class TestRotations:

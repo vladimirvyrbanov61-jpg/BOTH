@@ -302,7 +302,7 @@ def main() -> None:
     parser.add_argument(
         "--force-classical",
         action="store_true",
-        help="Recompute classical bounds even when validated cached bounds exist",
+        help="Recompute classical estimates even when validated cached estimates exist",
     )
     parser.add_argument(
         "--fresh-csv",

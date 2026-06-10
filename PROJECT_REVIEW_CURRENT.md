@@ -9,9 +9,14 @@ and classical differential-characteristic comparison.
 ## Current Assessment
 
 - Cipher primitives pass official known-answer vectors and complete local
-  primitive suites.
+  primitive suites, including all ten official SIMON and SPECK family
+  parameter variants.
 - Neural inputs contain ciphertext pairs only; plaintexts and keys are not
   persisted in caches.
+- The configured plaintext difference must be nonzero, preventing a trivial
+  zero-difference experiment.
+- Train, validation, and test indices are validated as a complete, disjoint
+  partition before model construction.
 - Dataset generation, splitting, initialization, minibatch order, Torch, and
   CUDA execution are seeded. Strict deterministic Torch algorithms are enabled.
 - Accuracy thresholds are selected on validation data; final metrics use the
@@ -39,4 +44,6 @@ test controlled sensitivity, not generalization over all differences.
 The normal local gate includes maintained unit/integration tests, classical
 tests, and complete SIMON/SPECK primitive suites. GitHub CI runs the same
 scientific and primitive coverage. Generated caches, models, logs, and IDE
-state remain local and outside version control.
+state remain local and outside version control. Historical result snapshots
+already committed under `results/` are retained as legacy evidence and are
+not treated as outputs of the current schema-5 pipeline.

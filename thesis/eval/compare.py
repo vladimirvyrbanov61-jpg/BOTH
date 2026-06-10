@@ -16,7 +16,7 @@ from thesis.classical.characteristic import (
     save_classical_bounds_csv,
     track_characteristic_over_rounds,
 )
-from thesis.config.loader import config_path_for_profile, load_config
+from thesis.config.loader import config_path_for_profile, load_config, validate_config
 from thesis.data.generator import DEFAULT_INPUT_DELTA
 from thesis.eval.aggregate import aggregate_csv, summarize_values
 from thesis.eval.manifest import (
@@ -312,6 +312,10 @@ def run_compare(
     cipher_names = ciphers or cfg.get("ciphers") or ["simon", "speck"]
     if isinstance(cipher_names, str):
         cipher_names = [cipher_names]
+    resolved_cfg = dict(cfg)
+    resolved_cfg["ciphers"] = list(cipher_names)
+    resolved_cfg["rounds"] = list(rounds)
+    validate_config(resolved_cfg, source="<resolved comparison configuration>")
 
     manifest_path = results_path / "manifest.json"
     manifest: dict | None = None

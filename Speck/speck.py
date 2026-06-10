@@ -261,14 +261,33 @@ class Speck:
         self.dtype = _dtype_for_n(n)
         self.block_size_bits = 2 * n
         self.key_size_bits = n * m
+        if not isinstance(self.rounds, int) or self.rounds < 1:
+            raise ValueError(f"rounds must be a positive integer, got {self.rounds}")
+        for name, rotation in (("alpha", self.alpha), ("beta", self.beta)):
+            if not isinstance(rotation, int) or not 1 <= rotation < n:
+                raise ValueError(
+                    f"{name} must be an integer in 1..{n - 1}, got {rotation}"
+                )
 
-    def _expand(self, key: np.ndarray, rounds: Optional[int] = None) -> np.ndarray:
+    def _expand(
+        self,
+        key: np.ndarray,
+        rounds: Optional[int] = None,
+        *,
+        batch_size: int | None = None,
+    ) -> np.ndarray:
         r = self.rounds if rounds is None else rounds
         k = np.asarray(key, dtype=self.dtype)
         if k.ndim == 1:
+            if k.shape[0] != self.m:
+                raise ValueError(f"key must have {self.m} words, got shape {k.shape}")
             k = k[np.newaxis, :]
-        if k.shape[-1] != self.m:
+        if k.ndim != 2 or k.shape[1] != self.m:
             raise ValueError(f"key must have {self.m} words, got shape {k.shape}")
+        if batch_size is not None and k.shape[0] not in (1, batch_size):
+            raise ValueError(
+                f"key batch size {k.shape[0]} must be 1 or match block batch {batch_size}"
+            )
         return expand_key(k, self.n, self.m, r, self.alpha, self.beta)
 
     def encrypt(
@@ -277,7 +296,7 @@ class Speck:
         key: np.ndarray,
     ) -> np.ndarray:
         pt = self._coerce_blocks(plaintext)
-        sk = self._expand(key)
+        sk = self._expand(key, batch_size=len(pt))
         return encrypt_blocks(pt, sk, self.n, self.rounds, self.alpha, self.beta)
 
     def decrypt(
@@ -286,7 +305,7 @@ class Speck:
         key: np.ndarray,
     ) -> np.ndarray:
         ct = self._coerce_blocks(ciphertext)
-        sk = self._expand(key)
+        sk = self._expand(key, batch_size=len(ct))
         return decrypt_blocks(ct, sk, self.n, self.rounds, self.alpha, self.beta)
 
     def _coerce_blocks(self, data: np.ndarray) -> np.ndarray:

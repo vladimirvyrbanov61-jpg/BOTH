@@ -83,6 +83,7 @@ _SIMON_PARAMS: dict[tuple[int, int], tuple[int, int]] = {
     # --- Official family (block bits / key bits) ---
     (16, 4): (0, 32),    # SIMON 32/64
     (24, 3): (0, 36),    # SIMON 48/72
+    (24, 4): (1, 36),    # SIMON 48/96
     (32, 3): (2, 42),    # SIMON 64/96
     (32, 4): (3, 44),    # SIMON 64/128
     (48, 2): (2, 52),    # SIMON 96/96

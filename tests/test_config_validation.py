@@ -26,6 +26,15 @@ def test_invalid_delta_fails_before_experiment() -> None:
         validate_config(invalid)
 
 
+def test_zero_delta_fails_before_experiment() -> None:
+    config = load_config(config_path_for_profile("quick"))
+    invalid = deepcopy(config)
+    invalid["input_delta"] = [0, 0]
+
+    with pytest.raises(ValueError, match="must be nonzero"):
+        validate_config(invalid)
+
+
 def test_invalid_split_ratios_fail_before_experiment() -> None:
     config = load_config(config_path_for_profile("quick"))
     invalid = deepcopy(config)

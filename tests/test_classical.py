@@ -17,10 +17,11 @@ from thesis.classical.ddt_core import (
     build_transition_from_pairs,
     max_trail_probability,
     normalize_counts,
+    prune_top_k,
     validate_probabilities,
 )
 from thesis.classical.ddt_simon import (
-    analytical_round_bound_from_f,
+    analytical_round_distribution_from_f,
     compute_f_ddt_exact,
     compute_simon_round_ddt,
     f_ddt_matrix_shape,
@@ -56,7 +57,7 @@ def test_f_ddt_shape_and_probabilities():
 
 def test_simon_analytical_round_from_f():
     f_ddt = compute_f_ddt_exact()
-    row = analytical_round_bound_from_f(DEFAULT_INPUT_DELTA, f_ddt)
+    row = analytical_round_distribution_from_f(DEFAULT_INPUT_DELTA, f_ddt)
     validate_probabilities(row)
     p_max, _ = highest_output_probability(row)
     assert 0.0 < p_max <= 1.0
@@ -203,3 +204,15 @@ def test_classical_csv_rejects_wrong_method_and_duplicate_round(tmp_path):
     rows[0]["method"] = "incorrect"
     save_classical_bounds_csv(path, rows)
     assert load_classical_bounds_csv(path, expected=expected) == {}
+
+
+def test_classical_search_rejects_invalid_parameters():
+    with pytest.raises(ValueError, match="unsupported cipher"):
+        track_characteristic_over_rounds(
+            "invalid",
+            [1],
+            DEFAULT_INPUT_DELTA,
+            n_samples_row=10,
+        )
+    with pytest.raises(ValueError, match="positive"):
+        prune_top_k({DEFAULT_INPUT_DELTA: 1.0}, 0)

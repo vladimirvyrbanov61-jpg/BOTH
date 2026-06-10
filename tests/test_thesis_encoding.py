@@ -12,7 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ciphers.common.encoding import PAIR_BITS, concat_pair_bits, concat_pairs_batch
+from ciphers.common.encoding import (
+    PAIR_BITS,
+    block_to_bits,
+    concat_pair_bits,
+    concat_pairs_batch,
+    reshape_for_cnn,
+)
 from ciphers.common.sampling import apply_delta, sample_keys
 from ciphers.registry import get_cipher
 from thesis.data.generator import (
@@ -41,6 +47,13 @@ def test_concat_pairs_batch_matches_scalar():
         np.testing.assert_array_equal(batch[i], row)
 
 
+def test_fixed_profile_encoding_rejects_wrong_width_and_shape():
+    with pytest.raises(ValueError, match="require n=16"):
+        block_to_bits(np.array([1, 2]), n=8)
+    with pytest.raises(ValueError, match="expected"):
+        reshape_for_cnn(np.zeros((2, 63), dtype=np.float32))
+
+
 def test_apply_delta_default():
     p = np.array([[0, 0], [0xFFFE, 0xFFFF]], dtype=np.uint16)
     d = apply_delta(p, DEFAULT_INPUT_DELTA)
@@ -59,6 +72,17 @@ def test_generate_distinguisher_blind_small(cipher_name):
     assert y.shape == (200,)
     assert int(y.sum()) == 100
     assert int((y == 0).sum()) == 100
+
+
+def test_generate_distinguisher_rejects_zero_delta():
+    with pytest.raises(ValueError, match="must be nonzero"):
+        generate_distinguisher_dataset(
+            "simon",
+            rounds=3,
+            n_samples=20,
+            rng=np.random.default_rng(0),
+            input_delta=(0, 0),
+        )
 
 
 def test_encrypt_rounds_api():

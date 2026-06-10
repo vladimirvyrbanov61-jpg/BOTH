@@ -23,7 +23,13 @@ from thesis.models.cnn_distinguisher import (
     CnnDistinguisher,
     build_model,
 )
-from thesis.models.train import _resolve_device, load_distinguisher
+from thesis.models.train import (
+    TrainConfig,
+    _resolve_device,
+    _validate_train_config,
+    _validate_training_data,
+    load_distinguisher,
+)
 
 
 def test_bit_pair_reshape():
@@ -58,8 +64,6 @@ def test_bce_with_logits_scalar_loss():
 
 
 def test_train_config_from_dict():
-    from thesis.models.train import TrainConfig
-
     cfg = TrainConfig.from_dict({"epochs": 5, "channels": [16, 32, 64]})
     assert cfg.epochs == 5
     assert cfg.channels == (16, 32, 64)
@@ -89,3 +93,20 @@ def test_explicit_cuda_request_fails_clearly_without_cuda(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     with pytest.raises(RuntimeError, match="CUDA was requested"):
         _resolve_device("cuda")
+
+
+def test_training_rejects_overlapping_splits():
+    X = np.zeros((6, INPUT_BITS), dtype=np.float32)
+    y = np.array([0, 1, 0, 1, 0, 1])
+    splits = {
+        "train": np.array([0, 1]),
+        "val": np.array([1, 2, 3]),
+        "test": np.array([4, 5]),
+    }
+    with pytest.raises(ValueError, match="data leakage"):
+        _validate_training_data(X, y, splits)
+
+
+def test_direct_training_config_is_validated():
+    with pytest.raises(ValueError, match="epochs"):
+        _validate_train_config(TrainConfig(epochs=0))

@@ -48,3 +48,24 @@ def test_aggregate_rows_reports_sample_uncertainty() -> None:
 
 def test_ten_seed_interval_uses_student_t() -> None:
     assert student_t_critical_95(10) == pytest.approx(2.262)
+
+
+def test_aggregate_rejects_non_finite_metrics() -> None:
+    row = {
+        "cipher": "simon",
+        "rounds": 3,
+        "split": "test",
+        "seed": 1,
+        "n_samples": 100,
+        "accuracy": float("nan"),
+        "auc_roc": 0.5,
+        "tpr": 0.5,
+        "tnr": 0.5,
+        "accuracy_advantage": 0.0,
+        "advantage_edge": 0.0,
+        "auc_advantage": 0.0,
+        "accuracy_null_p_value": 1.0,
+        "youden_j": 0.0,
+    }
+    with pytest.raises(ValueError, match="finite"):
+        aggregate_rows([row])

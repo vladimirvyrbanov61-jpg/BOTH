@@ -30,9 +30,16 @@ The current schema-5 maintained pipeline implements the corrective audit plan.
 - CSV, manifest, checkpoint, and cache writes use temporary-file replacement.
 - TensorBoard output is isolated by run identifier.
 - Runtime overrides are validated after resolution.
+- Zero plaintext differences, malformed feature tensors, overlapping dataset
+  splits, invalid direct training settings, and mismatched key batches are
+  rejected before computation.
+- The complete official SIMON and SPECK family parameter tables and
+  known-answer fixtures include both 48/96 variants.
 - Active imports use installable packages rather than `sys.path` mutation.
 - Full cipher suites are included in the local experiment test gate.
 - CI, `pyproject.toml`, dependency constraints, and artifact ignore rules exist.
+- Generated-directory ignore rules are root-anchored so they do not hide
+  maintained source packages such as `thesis/models`.
 - Generated caches, checkpoints, TensorBoard events, and IDE state have been
   removed from current Git tracking while remaining available locally.
 

@@ -43,6 +43,8 @@ def validate_probabilities(probs: dict[T, float], *, tol: float = 1e-9) -> None:
 
 
 def prune_top_k(states: dict[T, float], k: int) -> dict[T, float]:
+    if k < 1:
+        raise ValueError("k must be positive")
     if len(states) <= k:
         return states
     items = sorted(states.items(), key=lambda x: x[1], reverse=True)[:k]
@@ -57,7 +59,9 @@ def max_trail_probability(
     top_k: int = 32,
 ) -> tuple[float, list[Delta32]]:
     """Best trail retained by top-k max-product beam search."""
-    if rounds < 1:
+    if rounds < 0:
+        raise ValueError("rounds must be non-negative")
+    if rounds == 0:
         return 1.0, [initial_delta]
 
     states: dict[Delta32, float] = {initial_delta: 1.0}
