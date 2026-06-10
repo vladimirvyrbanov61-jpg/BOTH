@@ -13,6 +13,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+_SOURCE_SUFFIXES = {".py", ".yaml", ".yml", ".md", ".txt", ".toml"}
+_SOURCE_ROOTS = {"ciphers", "scripts", "Simon", "Speck", "tests", "thesis"}
+_ROOT_SOURCE_FILES = {
+    "README.md",
+    "PROJECT_REVIEW_CURRENT.md",
+    "AUDIT_IMPLEMENTATION_STATUS.md",
+    "requirements-thesis.txt",
+    "requirements-lock.txt",
+    "pyproject.toml",
+    ".github/workflows/tests.yml",
+}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -38,8 +50,44 @@ def _git_metadata(repo_root: Path) -> dict[str, Any]:
     }
 
 
+def source_tree_digest(repo_root: Path) -> str:
+    """Hash maintained source/configuration files, including untracked files."""
+    digest = hashlib.sha256()
+    paths: list[Path] = []
+    for root_name in sorted(_SOURCE_ROOTS):
+        root = repo_root / root_name
+        if not root.exists():
+            continue
+        paths.extend(
+            path
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.suffix.lower() in _SOURCE_SUFFIXES
+            and "__pycache__" not in path.parts
+        )
+    for name in sorted(_ROOT_SOURCE_FILES):
+        path = repo_root / name
+        if path.exists():
+            paths.append(path)
+    for path in sorted(set(paths)):
+        relative = path.relative_to(repo_root).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(file_digest(path).encode("ascii"))
+    return digest.hexdigest()
+
+
 def _dependency_versions() -> dict[str, str | None]:
-    names = ("numpy", "PyYAML", "scikit-learn", "torch", "matplotlib", "seaborn")
+    names = (
+        "numpy",
+        "PyYAML",
+        "scikit-learn",
+        "scipy",
+        "torch",
+        "matplotlib",
+        "seaborn",
+        "tensorboard",
+    )
     versions: dict[str, str | None] = {}
     for name in names:
         try:
@@ -47,6 +95,29 @@ def _dependency_versions() -> dict[str, str | None]:
         except importlib.metadata.PackageNotFoundError:
             versions[name] = None
     return versions
+
+
+def _torch_environment() -> dict[str, Any]:
+    try:
+        import torch
+    except ImportError:
+        return {"available": False}
+
+    cuda_available = bool(torch.cuda.is_available())
+    environment: dict[str, Any] = {
+        "available": True,
+        "cuda_available": cuda_available,
+        "cuda_version": torch.version.cuda,
+        "cudnn_version": torch.backends.cudnn.version(),
+        "deterministic_algorithms_at_manifest_creation": (
+            torch.are_deterministic_algorithms_enabled()
+        ),
+        "requested_determinism_policy": "strict",
+    }
+    if cuda_available:
+        environment["cuda_device_count"] = torch.cuda.device_count()
+        environment["cuda_device_name"] = torch.cuda.get_device_name(0)
+    return environment
 
 
 def config_digest(config: dict[str, Any]) -> str:
@@ -73,15 +144,24 @@ def build_manifest(
 ) -> dict[str, Any]:
     created_at = utc_now()
     return {
-        "schema_version": 3,
+        "schema_version": 5,
         "run_type": run_type,
         "status": "running",
         "created_at": created_at,
         "updated_at": created_at,
         "completed_at": None,
+        "training_completed_at": None,
+        "postprocessing": [],
         "command": [sys.executable, *sys.argv],
         "working_directory": os.getcwd(),
         "git": _git_metadata(repo_root),
+        "source": {
+            "scope": (
+                "maintained source, tests, configs, root reviews, CI workflow, "
+                "README, requirements, and pyproject"
+            ),
+            "sha256": source_tree_digest(repo_root),
+        },
         "environment": {
             "python": sys.version,
             "python_executable": sys.executable,
@@ -89,6 +169,7 @@ def build_manifest(
             "machine": platform.machine(),
             "processor": platform.processor(),
             "dependencies": _dependency_versions(),
+            "torch": _torch_environment(),
         },
         "config": {
             "path": str(config_path.resolve()),
@@ -103,6 +184,7 @@ def build_manifest(
                 "95% Student-t confidence interval across seeds; clipped to "
                 "the mathematical range of bounded metrics"
             ),
+            "null_significance": "per-seed p-values combined with Fisher's method",
         },
         "paths": {key: str(value) if value is not None else None for key, value in paths.items()},
         "progress": {"completed_seeds": [], "failed_seeds": []},
@@ -125,8 +207,60 @@ def artifact_inventory(run_dir: Path) -> list[dict[str, Any]]:
     return artifacts
 
 
+def artifact_record(path: Path, *, role: str, repo_root: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    try:
+        display_path = resolved.relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        display_path = str(resolved)
+    return {
+        "path": display_path,
+        "role": role,
+        "bytes": resolved.stat().st_size,
+        "type": resolved.suffix.lstrip(".") or "file",
+        "sha256": file_digest(resolved),
+    }
+
+
+def write_artifact_index(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing: list[dict[str, Any]] = []
+    if path.exists():
+        with open(path, encoding="utf-8") as handle:
+            existing = list(json.load(handle).get("artifacts", []))
+    merged = {
+        (
+            record.get("path"),
+            record.get("role"),
+            record.get("cipher"),
+            record.get("rounds"),
+            record.get("seed"),
+        ): record
+        for record in [*existing, *records]
+    }
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(
+                {"schema_version": 1, "artifacts": list(merged.values())},
+                handle,
+                indent=2,
+                sort_keys=True,
+            )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def load_artifact_index(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8") as handle:
+        return list(json.load(handle).get("artifacts", []))
+
+
 def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
-    manifest["schema_version"] = 3
+    manifest["schema_version"] = 5
     statistics = manifest.setdefault("statistics", {})
     statistics.update(
         {
@@ -136,9 +270,21 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
                 "95% Student-t confidence interval across seeds; clipped to "
                 "the mathematical range of bounded metrics"
             ),
+            "null_significance": "per-seed p-values combined with Fisher's method",
         }
     )
     manifest["updated_at"] = utc_now()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(manifest, handle, indent=2, sort_keys=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, sort_keys=True)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def record_postprocessing(manifest: dict[str, Any], stage: str) -> None:
+    manifest.setdefault("postprocessing", []).append(
+        {"stage": stage, "completed_at": utc_now()}
+    )

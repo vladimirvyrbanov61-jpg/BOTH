@@ -1,4 +1,0 @@
-cipher,rounds,max_characteristic_prob,delta_left,delta_right
-speck,3,0.015374503567872,1,0
-speck,4,0.00046154259710751746,1,0
-speck,5,6.9231389566127615e-06,1,0

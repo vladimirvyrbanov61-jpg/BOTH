@@ -7,6 +7,53 @@ from typing import Any
 import numpy as np
 
 
+def _binary_labels(values: np.ndarray, *, name: str) -> np.ndarray:
+    labels = np.asarray(values).ravel()
+    if labels.size == 0 or not np.isin(labels, (0, 1)).all():
+        raise ValueError(f"{name} must be a non-empty binary array")
+    return labels.astype(np.int64)
+
+
+def _probability_scores(values: np.ndarray, *, name: str) -> np.ndarray:
+    scores = np.asarray(values, dtype=np.float64).ravel()
+    if scores.size == 0 or not np.isfinite(scores).all():
+        raise ValueError(f"{name} must be a non-empty finite array")
+    if not ((0.0 <= scores) & (scores <= 1.0)).all():
+        raise ValueError(f"{name} must be probabilities between 0 and 1")
+    return scores
+
+
+def select_validation_threshold(
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+) -> float:
+    """Choose a threshold on validation data by maximizing Youden's J."""
+    y_true = _binary_labels(y_true, name="validation labels")
+    y_score = _probability_scores(y_score, name="validation scores")
+    if len(y_true) != len(y_score) or len(y_true) == 0:
+        raise ValueError("validation labels and scores must be non-empty and aligned")
+    if len(np.unique(y_true)) < 2:
+        return 0.5
+    from sklearn.metrics import roc_curve
+
+    fpr, tpr, thresholds = roc_curve(y_true, y_score)
+    finite = np.isfinite(thresholds)
+    if not finite.any():
+        return 0.5
+    candidates = np.where(finite)[0]
+    best = candidates[int(np.argmax((tpr - fpr)[candidates]))]
+    return float(np.clip(thresholds[best], 0.0, 1.0))
+
+
+def accuracy_null_p_value(correct: int, n_samples: int) -> float:
+    """Exact two-sided Binomial(n, 0.5) random-guessing p-value."""
+    if n_samples < 1 or not 0 <= correct <= n_samples:
+        raise ValueError("correct and n_samples must describe a non-empty test set")
+    from scipy.stats import binomtest
+
+    return float(binomtest(correct, n_samples, p=0.5).pvalue)
+
+
 def classification_metrics(
     y_true: np.ndarray,
     y_score: np.ndarray,
@@ -14,8 +61,12 @@ def classification_metrics(
     threshold: float = 0.5,
 ) -> dict[str, float]:
     """Compute accuracy, AUC-ROC, TPR, TNR, and Gohr-style advantage."""
-    y_true = np.asarray(y_true).astype(np.int64).ravel()
-    y_score = np.asarray(y_score, dtype=np.float64).ravel()
+    y_true = _binary_labels(y_true, name="labels")
+    y_score = _probability_scores(y_score, name="scores")
+    if len(y_true) != len(y_score) or len(y_true) == 0:
+        raise ValueError("labels and scores must be non-empty and aligned")
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be between 0 and 1")
     y_pred = (y_score >= threshold).astype(np.int64)
 
     acc = float(np.mean(y_pred == y_true))
@@ -34,17 +85,21 @@ def classification_metrics(
 
     tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     tnr = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    advantage_abs = abs(acc - 0.5)
-    advantage_edge = abs(2.0 * acc - 1.0)
+    accuracy_advantage = acc - 0.5
+    advantage_edge = 2.0 * accuracy_advantage
+    auc_advantage = 2.0 * (auc - 0.5)
     youden_j = tpr + tnr - 1.0
+    correct = tp + tn
 
     return {
         "accuracy": acc,
         "auc_roc": auc,
         "tpr": float(tpr),
         "tnr": float(tnr),
-        "advantage_abs": float(advantage_abs),
+        "accuracy_advantage": float(accuracy_advantage),
         "advantage_edge": float(advantage_edge),
+        "auc_advantage": float(auc_advantage),
+        "accuracy_null_p_value": accuracy_null_p_value(correct, len(y_true)),
         "youden_j": float(youden_j),
         "tp": tp,
         "tn": tn,
@@ -67,7 +122,20 @@ def metrics_row(
         "rounds": rounds,
         "split": split,
         "n_samples": n_samples,
-        **{k: metrics[k] for k in ("accuracy", "auc_roc", "tpr", "tnr", "advantage_abs", "advantage_edge", "youden_j")},
+        **{
+            k: metrics[k]
+            for k in (
+                "accuracy",
+                "auc_roc",
+                "tpr",
+                "tnr",
+                "accuracy_advantage",
+                "advantage_edge",
+                "auc_advantage",
+                "accuracy_null_p_value",
+                "youden_j",
+            )
+        },
     }
     if seed is not None:
         row["seed"] = seed

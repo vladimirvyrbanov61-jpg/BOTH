@@ -1,6 +1,7 @@
-"""Classical differential cryptanalysis baselines (DDT, characteristic bounds)."""
+"""Classical DDT baselines and non-exhaustive characteristic estimates."""
 
 from thesis.classical.characteristic import (
+    estimate_max_characteristic_probability,
     max_characteristic_probability,
     track_characteristic_over_rounds,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "simon_round_transition_monte_carlo",
     "compute_speck_round_ddt",
     "speck_round_transition_monte_carlo",
+    "estimate_max_characteristic_probability",
     "max_characteristic_probability",
     "track_characteristic_over_rounds",
 ]

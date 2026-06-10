@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from speck import Speck, _SPECK_PARAMS, decrypt_blocks, encrypt_blocks, expand_key, rol, ror
-from test_kat_vectors import SPECK_OFFICIAL_KATS, kat_arrays
+from Speck.speck import Speck, _SPECK_PARAMS, decrypt_blocks, encrypt_blocks, expand_key, rol, ror
+from Speck.test_kat_vectors import SPECK_OFFICIAL_KATS, kat_arrays
 
 
 class TestSpeckParamsTable:

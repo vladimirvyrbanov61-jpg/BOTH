@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from functools import lru_cache
 from typing import Dict, Iterator
 
 import numpy as np
@@ -16,11 +15,7 @@ from thesis.classical.ddt_core import (
     validate_probabilities,
 )
 
-_SIMON_ROOT = Path(__file__).resolve().parents[2] / "Simon"
-if str(_SIMON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SIMON_ROOT))
-
-from simon import f_round  # noqa: E402
+from Simon.simon import f_round
 
 N_BITS = 16
 
@@ -29,6 +24,7 @@ def _mask16() -> int:
     return WORD_MASK
 
 
+@lru_cache(maxsize=2)
 def compute_f_ddt_exact(n: int = N_BITS) -> Dict[int, Dict[int, float]]:
     """Exact DDT of Simon round function f(x) = (S¹x & S⁸x) ⊕ S²x.
 

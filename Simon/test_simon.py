@@ -12,8 +12,8 @@ from typing import Optional
 import numpy as np
 import pytest
 
-from simon import Simon, _SIMON_PARAMS, _Z_SEQUENCES, rol, ror, f_round, expand_key
-from test_kat_vectors import SIMON_OFFICIAL_KATS, kat_arrays
+from Simon.simon import Simon, _SIMON_PARAMS, _Z_SEQUENCES, rol, ror, f_round, expand_key
+from Simon.test_kat_vectors import SIMON_OFFICIAL_KATS, kat_arrays
 
 
 # ---------------------------------------------------------------------------

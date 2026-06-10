@@ -28,7 +28,9 @@ from thesis.classical.ddt_simon import (
 )
 from thesis.classical.ddt_speck import compute_speck_round_ddt, highest_output_probability
 from thesis.classical.characteristic import (
-    max_characteristic_from_fixed_transition,
+    estimate_max_characteristic_from_fixed_transition,
+    load_classical_bounds_csv,
+    save_classical_bounds_csv,
     track_characteristic_over_rounds,
 )
 from thesis.data.generator import DEFAULT_INPUT_DELTA
@@ -78,10 +80,27 @@ def test_max_trail_composition_toy():
         (1, 0): {(0, 0): 1.0},
         (0, 0): {(0, 1): 1.0},
     }
-    p, trail = max_characteristic_from_fixed_transition((0, 1), transition, 3, top_k=8)
+    p, trail = estimate_max_characteristic_from_fixed_transition(
+        (0, 1), transition, 3, top_k=8
+    )
     assert 0.0 <= p <= 1.0
     assert trail[0] == (0, 1)
     assert len(trail) == 4
+    assert all(
+        trail[index + 1] in transition[trail[index]]
+        for index in range(len(trail) - 1)
+    )
+
+
+def test_max_trail_reconstructs_connected_parent_path():
+    transition = {
+        (0, 0): {(1, 0): 0.6, (2, 0): 0.4},
+        (1, 0): {(3, 0): 0.5, (5, 0): 0.5},
+        (2, 0): {(4, 0): 1.0},
+    }
+    probability, trail = max_trail_probability((0, 0), transition, 2, top_k=8)
+    assert probability == pytest.approx(0.4)
+    assert trail == [(0, 0), (2, 0), (4, 0)]
 
 
 def test_build_transition_matrix_keys_are_delta_pairs():
@@ -113,4 +132,74 @@ def test_track_characteristic_reuses_one_round_traversal(monkeypatch):
 
     assert [row["rounds"] for row in rows] == [2, 3]
     assert [row["max_characteristic_prob"] for row in rows] == [0.25, 0.125]
+    assert all(row["is_formal_bound"] is False for row in rows)
+    assert all("beam_search" in row["method"] for row in rows)
     assert len(calls) == 1
+
+
+def test_classical_csv_declares_non_formal_estimate(tmp_path):
+    rows = track_characteristic_over_rounds(
+        "speck",
+        [1],
+        DEFAULT_INPUT_DELTA,
+        n_samples_row=100,
+        top_k=2,
+        seed=3,
+    )
+    rows[0].update(
+        {
+            "repetitions": 1,
+            "probability_std": 0.0,
+            "probability_ci95_low": rows[0]["max_characteristic_prob"],
+            "probability_ci95_high": rows[0]["max_characteristic_prob"],
+        }
+    )
+    path = tmp_path / "estimate.csv"
+    save_classical_bounds_csv(path, rows)
+
+    loaded = load_classical_bounds_csv(
+        path,
+        expected={
+            "cipher": "speck",
+            "delta": DEFAULT_INPUT_DELTA,
+            "n_samples_row": 100,
+            "top_k": 2,
+            "seed": 3,
+            "repetitions": 1,
+        },
+    )
+    assert 1 in loaded
+
+
+def test_classical_csv_rejects_wrong_method_and_duplicate_round(tmp_path):
+    rows = track_characteristic_over_rounds(
+        "speck",
+        [1],
+        DEFAULT_INPUT_DELTA,
+        n_samples_row=100,
+        top_k=2,
+        seed=3,
+    )
+    rows[0].update(
+        {
+            "repetitions": 1,
+            "probability_std": 0.0,
+            "probability_ci95_low": rows[0]["max_characteristic_prob"],
+            "probability_ci95_high": rows[0]["max_characteristic_prob"],
+        }
+    )
+    path = tmp_path / "estimate.csv"
+    save_classical_bounds_csv(path, [rows[0], rows[0]])
+    expected = {
+        "cipher": "speck",
+        "delta": DEFAULT_INPUT_DELTA,
+        "n_samples_row": 100,
+        "top_k": 2,
+        "seed": 3,
+        "repetitions": 1,
+    }
+    assert load_classical_bounds_csv(path, expected=expected) == {}
+
+    rows[0]["method"] = "incorrect"
+    save_classical_bounds_csv(path, rows)
+    assert load_classical_bounds_csv(path, expected=expected) == {}

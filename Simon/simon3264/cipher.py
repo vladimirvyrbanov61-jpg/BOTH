@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from simon import Simon, decrypt_blocks, encrypt_blocks, expand_key
+from Simon.simon import Simon, decrypt_blocks, encrypt_blocks, expand_key
 
 N_BITS = 16
 M_WORDS = 4
@@ -29,11 +29,11 @@ class Simon3264:
 
     def __init__(self) -> None:
         self._core = Simon(n=N_BITS, m=M_WORDS, z_index=Z_INDEX, rounds=ROUNDS)
-        self._subkey_cache: dict[bytes, np.ndarray] = {}
+        self._subkey_cache: dict[tuple[bytes, tuple[int, ...], int, int], np.ndarray] = {}
 
-    def _key_bytes(self, key: np.ndarray) -> bytes:
-        k = np.asarray(key, dtype=self.dtype).reshape(self.m)
-        return k.tobytes()
+    def _key_identity(self, key: np.ndarray) -> tuple[bytes, tuple[int, ...]]:
+        k = np.ascontiguousarray(np.asarray(key, dtype=self.dtype))
+        return k.tobytes(), k.shape
 
     def get_subkeys(
         self,
@@ -49,7 +49,8 @@ class Simon3264:
         k = np.asarray(key, dtype=self.dtype)
         if k.ndim == 1:
             k = k[np.newaxis, :]
-        cache_key = (self._key_bytes(k[0]), r, z)
+        key_bytes, key_shape = self._key_identity(k)
+        cache_key = (key_bytes, key_shape, r, z)
         if use_cache and cache_key in self._subkey_cache:
             return self._subkey_cache[cache_key]
         sk = expand_key(k, N_BITS, M_WORDS, r, z)

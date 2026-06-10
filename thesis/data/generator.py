@@ -65,12 +65,12 @@ def generate_distinguisher_dataset(
     p0 = sample_plaintexts(n_each, rng)
     p1 = apply_delta(p0, input_delta)
 
-    real0 = np.empty((n_each, 2), dtype=np.uint16)
-    real1 = np.empty((n_each, 2), dtype=np.uint16)
-    for i in range(n_each):
-        k = keys[i]
-        real0[i] = cipher.encrypt(p0[i : i + 1], k, rounds=rounds)[0]
-        real1[i] = cipher.encrypt(p1[i : i + 1], k, rounds=rounds)[0]
+    # Cipher profiles support one independent key per block. Expanding the
+    # complete key batch once is substantially faster than scalar encryption
+    # and avoids retaining one cache entry per sample.
+    real0 = cipher.encrypt(p0, keys, rounds=rounds)
+    real1 = cipher.encrypt(p1, keys, rounds=rounds)
+    cipher.clear_subkey_cache()
 
     rand0 = random_blocks(n_each, rng)
     rand1 = random_blocks(n_each, rng)
@@ -155,14 +155,30 @@ def generate_or_load(
     if not force_regen and path.exists():
         loaded = load_blind_npz(path)
         y = loaded["y"]
+        cached_rounds = int(loaded["rounds"][0])
+        if cached_rounds != rounds:
+            raise ValueError(
+                f"cache round mismatch in {path}: expected {rounds}, found {cached_rounds}"
+            )
+        if len(y) != n_samples:
+            raise ValueError(
+                f"cache sample-count mismatch in {path}: "
+                f"expected {n_samples}, found {len(y)}"
+            )
+        if int(y.sum()) != n_samples // 2:
+            raise ValueError(f"cache is not class-balanced in {path}")
         return {
             **loaded,
-            "rounds": int(loaded["rounds"][0]),
-            "splits": stratified_split_indices(y, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed + rounds),
+            "rounds": cached_rounds,
+            "splits": stratified_split_indices(
+                y, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed
+            ),
             "cache_path": path,
         }
 
-    rng = np.random.default_rng(seed + rounds)
+    # Reuse the same underlying random pairs across round counts so round curves
+    # isolate the effect of additional cipher rounds.
+    rng = np.random.default_rng(seed)
     X, y = generate_distinguisher_dataset(
         cipher_name,
         rounds,
@@ -175,6 +191,8 @@ def generate_or_load(
         "X": X,
         "y": y,
         "rounds": rounds,
-        "splits": stratified_split_indices(y, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed + rounds),
+        "splits": stratified_split_indices(
+            y, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed
+        ),
         "cache_path": path,
     }

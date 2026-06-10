@@ -6,6 +6,7 @@ __pycache__/
 # Local Python environments
 .venv/
 venv/
+*.egg-info/
 
 # IDE and editor state
 .idea/
@@ -16,4 +17,10 @@ state.vscdb
 thesis/data/cache/
 models/
 runs/
+*.pt
+*.pth
+*.npz
+events.out.tfevents.*
 
+# Local historical/generated backups retained outside version control
+Archieve/backup_*/

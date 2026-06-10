@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any, Optional
 
 import numpy as np
 
-from thesis.eval.metrics import classification_metrics
+from thesis.eval.metrics import classification_metrics, select_validation_threshold
 from thesis.models.cnn_distinguisher import CnnDistinguisher, build_model
 
 
@@ -17,6 +19,11 @@ def _resolve_device(device: str) -> str:
 
     if device == "auto":
         return "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA was requested in the training configuration, but PyTorch "
+            "does not report an available CUDA device"
+        )
     return device
 
 
@@ -49,14 +56,12 @@ def _batch_iter(
     y: np.ndarray,
     batch_size: int,
     rng: np.random.Generator,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     n = len(y)
     order = rng.permutation(n)
-    batches: list[tuple[np.ndarray, np.ndarray]] = []
     for start in range(0, n, batch_size):
         sl = order[start : start + batch_size]
-        batches.append((X[sl], y[sl]))
-    return batches
+        yield X[sl], y[sl]
 
 
 def _forward_loss(
@@ -99,6 +104,7 @@ def train_distinguisher(
     model_dir: Path | str,
     cfg: Optional[TrainConfig] = None,
     log_dir: Optional[Path | str] = None,
+    checkpoint_metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Train CNN with early stopping on validation AUC; save best checkpoint.
     
@@ -113,28 +119,24 @@ def train_distinguisher(
 
     train_cfg = cfg or TrainConfig()
     device = _resolve_device(train_cfg.device)
+    random.seed(train_cfg.seed)
     torch.manual_seed(train_cfg.seed)
     np.random.seed(train_cfg.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(train_cfg.seed)
+    torch.use_deterministic_algorithms(True)
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
     model_dir = Path(model_dir)
-    # New: seed-aware checkpoint path (prevents overwrites)
-    seed_model_dir = model_dir / f"seed_{train_cfg.seed}" / cipher
+    run_id = str((checkpoint_metadata or {}).get("run_id", "unscoped"))
+    seed_model_dir = model_dir / run_id / f"seed_{train_cfg.seed}" / cipher
     seed_model_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = seed_model_dir / f"R{rounds}.pt"
 
-    # Initialize TensorBoard if log_dir provided
     writer = None
-    if log_dir is not None:
-        from torch.utils.tensorboard import SummaryWriter
-        log_dir = Path(log_dir)
-        tb_log_dir = log_dir / f"seed_{train_cfg.seed}" / f"{cipher}_R{rounds}"
-        writer = SummaryWriter(log_dir=str(tb_log_dir))
-
+    tb_log_dir: Path | None = None
     X_tr, y_tr = _index_subset(X, y, splits["train"])
     X_va, y_va = _index_subset(X, y, splits["val"])
 
@@ -152,63 +154,92 @@ def train_distinguisher(
     best_state: Optional[dict[str, Any]] = None
     history: list[dict[str, float]] = []
 
-    for epoch in range(train_cfg.epochs):
-        model.train()
-        epoch_losses: list[float] = []
-        for xb, yb in _batch_iter(X_tr, y_tr, train_cfg.batch_size, rng):
-            opt.zero_grad()
-            loss = _forward_loss(model, xb, yb, device, loss_fn)
-            loss.backward()
-            opt.step()
-            epoch_losses.append(float(loss.item()))
-
-        val_scores = _predict_scores(model, X_va, device)
-        val_m = classification_metrics(y_va, val_scores)
-        train_loss_mean = float(np.mean(epoch_losses))
-        history.append(
-            {
-                "epoch": float(epoch),
-                "train_loss": train_loss_mean,
-                "val_auc": val_m["auc_roc"],
-                "val_accuracy": val_m["accuracy"],
-                "val_advantage_abs": val_m["advantage_abs"],
-            }
+    if log_dir is not None:
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+        except ImportError as exc:
+            raise RuntimeError(
+                "TensorBoard logging was requested but tensorboard is not "
+                "installed. Run: python -m pip install -r requirements-thesis.txt"
+            ) from exc
+        log_dir = Path(log_dir)
+        tb_log_dir = (
+            log_dir / run_id / f"seed_{train_cfg.seed}" / f"{cipher}_R{rounds}"
         )
+        writer = SummaryWriter(log_dir=str(tb_log_dir))
 
-        # Log to TensorBoard if enabled
+    try:
+        for epoch in range(train_cfg.epochs):
+            model.train()
+            epoch_losses: list[float] = []
+            for xb, yb in _batch_iter(X_tr, y_tr, train_cfg.batch_size, rng):
+                opt.zero_grad()
+                loss = _forward_loss(model, xb, yb, device, loss_fn)
+                loss.backward()
+                opt.step()
+                epoch_losses.append(float(loss.item()))
+
+            val_scores = _predict_scores(model, X_va, device)
+            val_m = classification_metrics(y_va, val_scores)
+            train_loss_mean = float(np.mean(epoch_losses))
+            history.append(
+                {
+                    "epoch": float(epoch),
+                    "train_loss": train_loss_mean,
+                    "val_auc": val_m["auc_roc"],
+                    "val_accuracy": val_m["accuracy"],
+                    "val_advantage_edge": val_m["advantage_edge"],
+                }
+            )
+
+            if writer is not None:
+                writer.add_scalar("Loss/Train", train_loss_mean, epoch)
+                writer.add_scalar("AUC/Validation", val_m["auc_roc"], epoch)
+                writer.add_scalar("Accuracy/Validation", val_m["accuracy"], epoch)
+                writer.add_scalar(
+                    "AdvantageEdge/Validation",
+                    val_m["advantage_edge"],
+                    epoch,
+                )
+
+            if val_m["auc_roc"] > best_auc:
+                best_auc = val_m["auc_roc"]
+                patience_ctr = 0
+                best_state = {
+                    key: value.cpu().clone()
+                    for key, value in model.state_dict().items()
+                }
+            else:
+                patience_ctr += 1
+                if patience_ctr >= train_cfg.patience and best_state is not None:
+                    break
+
+        if best_state is not None:
+            model.load_state_dict(best_state)
+
+        validation_scores = _predict_scores(model, X_va, device)
+        decision_threshold = select_validation_threshold(y_va, validation_scores)
+    finally:
         if writer is not None:
-            writer.add_scalar("Loss/Train", train_loss_mean, epoch)
-            writer.add_scalar("AUC/Validation", val_m["auc_roc"], epoch)
-            writer.add_scalar("Accuracy/Validation", val_m["accuracy"], epoch)
-            writer.add_scalar("AdvantageAbs/Validation", val_m["advantage_abs"], epoch)
+            writer.close()
 
-        if val_m["auc_roc"] > best_auc:
-            best_auc = val_m["auc_roc"]
-            patience_ctr = 0
-            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-        else:
-            patience_ctr += 1
-            if patience_ctr >= train_cfg.patience and best_state is not None:
-                break
-
-    if best_state is not None:
-        model.load_state_dict(best_state)
-
-    # Close TensorBoard writer safely
-    if writer is not None:
-        writer.close()
-
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "cipher": cipher,
-            "rounds": rounds,
-            "train_config": train_cfg.__dict__,
-            "best_val_auc": best_auc,
-            "history": history,
-        },
-        ckpt_path,
-    )
+    checkpoint = {
+        "schema_version": 2,
+        "state_dict": model.state_dict(),
+        "cipher": cipher,
+        "rounds": rounds,
+        "train_config": train_cfg.__dict__,
+        "best_val_auc": best_auc,
+        "history": history,
+        "decision_threshold": decision_threshold,
+        "experiment": checkpoint_metadata or {},
+    }
+    temporary = ckpt_path.with_name(f".{ckpt_path.name}.tmp")
+    try:
+        torch.save(checkpoint, temporary)
+        temporary.replace(ckpt_path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
     return {
         "model": model,
@@ -216,6 +247,8 @@ def train_distinguisher(
         "best_val_auc": best_auc,
         "history": history,
         "device": device,
+        "decision_threshold": decision_threshold,
+        "tensorboard_dir": tb_log_dir,
     }
 
 
@@ -237,5 +270,7 @@ def load_distinguisher(
     channels = tuple(data.get("train_config", {}).get("channels", (32, 64, 128)))
     model = build_model(channels).to(dev)
     model.load_state_dict(data["state_dict"])
+    model.decision_threshold = float(data.get("decision_threshold", 0.5))
+    model.checkpoint_metadata = data.get("experiment", {})
     model.eval()
     return model

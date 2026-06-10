@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -52,7 +53,8 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
     assert row["rounds"] == 3
     assert row["split"] == "test"
     assert 0.0 <= row["accuracy"] <= 1.0
-    assert row["advantage_abs"] >= 0.0
+    assert -1.0 <= row["advantage_edge"] <= 1.0
+    assert 0.0 <= row["accuracy_null_p_value"] <= 1.0
     assert results_path.exists()
     assert results_path.parent == smoke_dirs["results"]
 
@@ -73,12 +75,56 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
     assert float(aggregate_rows[0]["accuracy_std"]) == 0.0
     assert (results_path / "simon_accuracy.png").exists()
 
-    ckpt = smoke_dirs["models"] / "seed_1" / "simon" / "R3.pt"
+    ckpt = (
+        smoke_dirs["models"]
+        / results_path.name
+        / "seed_1"
+        / "simon"
+        / "R3.pt"
+    )
     assert ckpt.exists()
     assert ckpt.stat().st_size > 0
+    with open(results_path / "external_artifacts.json", encoding="utf-8") as f:
+        external = json.load(f)["artifacts"]
+    roles = {artifact["role"] for artifact in external}
+    assert {"dataset_cache", "model_checkpoint"} <= roles
+    assert all(len(artifact["sha256"]) == 64 for artifact in external)
+    with open(results_path / "manifest.json", encoding="utf-8") as f:
+        manifest = json.load(f)
+    assert manifest["schema_version"] == 5
+    assert manifest["training_completed_at"]
+    assert manifest["completed_at"]
+    assert manifest["environment"]["torch"][
+        "deterministic_algorithms_after_training"
+    ] is True
 
 
 def test_train_config_from_dict_channels() -> None:
     cfg = TrainConfig.from_dict({"channels": [16, 32], "epochs": 2})
     assert cfg.channels == (16, 32)
     assert cfg.epochs == 2
+
+
+def test_round_sweep_records_training_failure(tmp_path, monkeypatch) -> None:
+    def fail_generation(*args, **kwargs):
+        raise RuntimeError("synthetic generation failure")
+
+    monkeypatch.setattr(
+        "thesis.eval.round_sweep.generate_or_load",
+        fail_generation,
+    )
+    with pytest.raises(RuntimeError, match="synthetic generation failure"):
+        run_round_sweep(
+            config_path_for_profile("quick"),
+            ciphers=["simon"],
+            rounds_list=[3],
+            n_samples=100,
+            results_dir=tmp_path,
+            training_overrides={"epochs": 1},
+        )
+
+    manifests = list(tmp_path.glob("run_*/manifest.json"))
+    assert len(manifests) == 1
+    manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed"
+    assert manifest["failure"]["stage"] == "round_sweep"

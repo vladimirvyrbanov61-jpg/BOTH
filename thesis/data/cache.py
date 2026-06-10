@@ -11,6 +11,8 @@ import numpy as np
 
 from ciphers.registry import CipherName
 
+DATASET_SCHEMA_VERSION = 2
+
 
 def config_fingerprint(
     *,
@@ -32,6 +34,7 @@ def config_fingerprint(
         "val_ratio": float(val_ratio),
         "blind": True,
         "feature": "concat_bits_64",
+        "schema_version": DATASET_SCHEMA_VERSION,
     }
     return hashlib.md5(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -82,6 +85,8 @@ def load_blind_npz(path: Path) -> dict[str, Any]:
     rounds = loaded["rounds"]
     if X.ndim != 2 or X.shape[1] != 64 or X.dtype != np.float32:
         raise ValueError(f"invalid feature tensor in cache {path}: {X.shape}, {X.dtype}")
+    if not np.isfinite(X).all() or not np.isin(X, (0.0, 1.0)).all():
+        raise ValueError(f"feature tensor is not binary in cache {path}")
     if y.ndim != 1 or len(y) != len(X) or not np.isin(y, (0, 1)).all():
         raise ValueError(f"invalid labels in cache {path}")
     if rounds.shape != (1,) or int(rounds[0]) < 1:

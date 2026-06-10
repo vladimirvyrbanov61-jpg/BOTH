@@ -57,6 +57,12 @@ def main() -> int:
         help="Override samples per round",
     )
     parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=None,
+        help="Explicit run directory; required with --skip-sweep",
+    )
+    parser.add_argument(
         "--skip-tests",
         action="store_true",
         help="Skip pytest gate",
@@ -84,7 +90,7 @@ def main() -> int:
     parser.add_argument(
         "--force-classical",
         action="store_true",
-        help="Recompute classical bounds",
+        help="Recompute classical characteristic estimates",
     )
     parser.add_argument(
         "--pytest-verbose",
@@ -92,6 +98,10 @@ def main() -> int:
         help="Verbose pytest output",
     )
     args = parser.parse_args()
+    if args.skip_sweep and args.results_dir is None:
+        parser.error("--skip-sweep requires --results-dir pointing to a completed run")
+    if args.skip_sweep and args.skip_compare:
+        parser.error("--skip-sweep and --skip-compare would perform no experiment work")
 
     cfg_path = args.config or config_path_for_profile(args.profile)
     print(f"[run_thesis] config: {cfg_path}")
@@ -106,6 +116,11 @@ def main() -> int:
             "tests/test_aggregate.py",
             "tests/test_compare_experiments.py",
             "tests/test_config_validation.py",
+            "tests/test_metrics.py",
+            "tests/test_cipher_profile_cache.py",
+            "Simon/test_simon.py",
+            "Speck/test_speck.py",
+            "Speck/test_speck3264.py",
         ]
         rc = _run_pytest(test_files, verbose=args.pytest_verbose)
         if rc != 0:
@@ -120,6 +135,7 @@ def main() -> int:
             ciphers=args.cipher,
             rounds_list=args.rounds,
             n_samples=args.n_samples,
+            results_dir=args.results_dir,
             force_regen=args.force_regen,
             fresh_csv=args.fresh_csv,
         )
@@ -131,7 +147,7 @@ def main() -> int:
             ciphers=args.cipher,
             rounds_list=args.rounds,
             force_classical=args.force_classical,
-            results_dir=results_path,
+            results_dir=results_path or args.results_dir,
         )
 
     print("[run_thesis] done.")

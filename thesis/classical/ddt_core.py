@@ -56,15 +56,16 @@ def max_trail_probability(
     *,
     top_k: int = 32,
 ) -> tuple[float, list[Delta32]]:
-    """Best single differential trail: max-product DP over sparse round transitions."""
+    """Best trail retained by top-k max-product beam search."""
     if rounds < 1:
         return 1.0, [initial_delta]
 
     states: dict[Delta32, float] = {initial_delta: 1.0}
-    trail: list[Delta32] = [initial_delta]
+    parent_layers: list[dict[Delta32, Delta32]] = []
 
     for _ in range(rounds):
         nxt: dict[Delta32, float] = {}
+        parents: dict[Delta32, Delta32] = {}
         for d_in, p_in in states.items():
             row = transition.get(d_in)
             if not row:
@@ -73,13 +74,18 @@ def max_trail_probability(
                 cand = p_in * p_cond
                 if cand > nxt.get(d_out, 0.0):
                     nxt[d_out] = cand
+                    parents[d_out] = d_in
         if not nxt:
-            return 0.0, trail
+            return 0.0, [initial_delta]
         states = prune_top_k(nxt, top_k)
-        best = max(states, key=states.get)
-        trail.append(best)
+        parent_layers.append({state: parents[state] for state in states})
 
-    return max(states.values()), trail
+    best = max(states, key=states.get)
+    trail = [best]
+    for parents in reversed(parent_layers):
+        trail.append(parents[trail[-1]])
+    trail.reverse()
+    return states[best], trail
 
 
 def build_transition_from_pairs(

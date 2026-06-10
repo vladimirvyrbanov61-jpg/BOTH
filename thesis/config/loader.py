@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,6 +46,8 @@ def _number(value: Any, name: str, *, minimum: float = 0.0) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be numeric")
     number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be finite")
     if number < minimum:
         raise ValueError(f"{name} must be >= {minimum}")
     return number
@@ -150,6 +153,11 @@ def validate_config(data: dict[str, Any], *, source: Path | str = "<config>") ->
         minimum=1,
     )
     _integer(classical.get("top_k_dp"), f"{label}: classical.top_k_dp", minimum=1)
+    _integer(
+        classical.get("monte_carlo_repetitions"),
+        f"{label}: classical.monte_carlo_repetitions",
+        minimum=1,
+    )
 
 
 def config_path_for_profile(profile: ProfileName = "full") -> Path:

@@ -1,4 +1,4 @@
-"""Publication plots: neural distinguisher advantage vs classical DDT bounds."""
+"""Publication plots: neural advantage vs classical beam-search estimates."""
 
 from __future__ import annotations
 
@@ -12,13 +12,18 @@ import seaborn as sns
 
 from thesis.classical.characteristic import (
     load_classical_bounds_csv,
+    load_classical_uncertainty_csv,
     save_classical_bounds_csv,
     track_characteristic_over_rounds,
 )
 from thesis.config.loader import config_path_for_profile, load_config
 from thesis.data.generator import DEFAULT_INPUT_DELTA
-from thesis.eval.aggregate import aggregate_csv
-from thesis.eval.manifest import artifact_inventory, utc_now, write_manifest
+from thesis.eval.aggregate import aggregate_csv, summarize_values
+from thesis.eval.manifest import (
+    artifact_inventory,
+    record_postprocessing,
+    write_manifest,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = config_path_for_profile("full")
@@ -30,15 +35,15 @@ def _resolve_path(base: Path, value: str) -> Path:
 
 
 def load_neural_sweep(csv_path: Path) -> dict[int, dict[str, float]]:
-    """Map rounds to aggregate advantage and its 95% confidence interval."""
+    """Map rounds to aggregate signed accuracy edge and its 95% confidence interval."""
     if not csv_path.exists():
         return {}
     rows, _ = aggregate_csv(csv_path)
     return {
         int(row["rounds"]): {
-            "mean": float(row["advantage_abs_mean"]),
-            "ci95_low": float(row["advantage_abs_ci95_low"]),
-            "ci95_high": float(row["advantage_abs_ci95_high"]),
+            "mean": float(row["advantage_edge_mean"]),
+            "ci95_low": float(row["advantage_edge_ci95_low"]),
+            "ci95_high": float(row["advantage_edge_ci95_high"]),
         }
         for row in rows
     }
@@ -63,7 +68,7 @@ def require_neural_overlap(
         )
 
 
-def ensure_classical_bounds(
+def ensure_classical_estimates(
     cipher: str,
     rounds: list[int],
     delta: tuple[int, int],
@@ -72,33 +77,67 @@ def ensure_classical_bounds(
     n_samples_row: int | None,
     top_k: int,
     seed: int,
+    repetitions: int,
     force: bool,
 ) -> dict[int, float]:
     bounds_path = results_dir / f"{cipher}_classical_bounds.csv"
+    if n_samples_row is None:
+        n_samples_row = 250_000 if cipher == "simon" else 1_000_000
+    provenance = {
+        "cipher": cipher,
+        "delta": delta,
+        "n_samples_row": n_samples_row,
+        "top_k": top_k,
+        "seed": seed,
+        "repetitions": repetitions if cipher == "speck" else 1,
+    }
     if not force and bounds_path.exists():
-        loaded = load_classical_bounds_csv(bounds_path)
+        loaded = load_classical_bounds_csv(bounds_path, expected=provenance)
         if all(rounds_value in loaded for rounds_value in rounds):
             return loaded
 
-    rows = track_characteristic_over_rounds(
-        cipher,
-        rounds,
-        delta,
-        n_samples_row=n_samples_row,
-        top_k=top_k,
-        seed=seed,
-    )
-    if bounds_path.exists():
-        bounds_path.unlink()
+    effective_repetitions = repetitions if cipher == "speck" else 1
+    repeated_rows = [
+        track_characteristic_over_rounds(
+            cipher,
+            rounds,
+            delta,
+            n_samples_row=n_samples_row,
+            top_k=top_k,
+            seed=seed + repetition * 100_000,
+        )
+        for repetition in range(effective_repetitions)
+    ]
+    rows = []
+    for index, rounds_value in enumerate(rounds):
+        values = [
+            float(repetition_rows[index]["max_characteristic_prob"])
+            for repetition_rows in repeated_rows
+        ]
+        summary = summarize_values(values, bounds=(0.0, 1.0))
+        row = dict(repeated_rows[0][index])
+        row.update(
+            {
+                "rounds": rounds_value,
+                "max_characteristic_prob": summary["mean"],
+                "repetitions": effective_repetitions,
+                "probability_std": summary["std"],
+                "probability_ci95_low": summary["ci95_low"],
+                "probability_ci95_high": summary["ci95_high"],
+                "seed": seed,
+            }
+        )
+        rows.append(row)
     save_classical_bounds_csv(bounds_path, rows)
-    return load_classical_bounds_csv(bounds_path)
+    return load_classical_bounds_csv(bounds_path, expected=provenance)
 
 
-def plot_classical_bounds(
+def plot_classical_estimates(
     cipher: str,
     rounds: list[int],
     classical: dict[int, float],
     out_path: Path,
+    uncertainty: dict[int, dict[str, float]] | None = None,
 ) -> None:
     xs = sorted(set(rounds) & set(classical))
     probabilities = [max(classical[rounds_value], 1e-300) for rounds_value in xs]
@@ -106,20 +145,39 @@ def plot_classical_bounds(
 
     sns.set_theme(style="whitegrid", context="paper", font_scale=1.1)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
-    ax1.plot(xs, probabilities, "o-", linewidth=2)
+    lower = [
+        max((uncertainty or {}).get(r, {}).get("ci95_low", classical[r]), 1e-300)
+        for r in xs
+    ]
+    upper = [
+        max((uncertainty or {}).get(r, {}).get("ci95_high", classical[r]), 1e-300)
+        for r in xs
+    ]
+    ax1.errorbar(
+        xs,
+        probabilities,
+        yerr=np.vstack(
+            [np.asarray(probabilities) - lower, np.asarray(upper) - probabilities]
+        ),
+        fmt="o-",
+        capsize=4,
+        linewidth=2,
+    )
     ax1.set_yscale("log")
     ax1.set_xlabel("Round count R")
-    ax1.set_ylabel("Max characteristic probability")
+    ax1.set_ylabel("Best retained trail probability estimate")
     ax1.set_xticks(xs)
     ax1.set_title("Probability (log scale)")
 
     ax2.plot(xs, log2_probability, "s-", color="#d62728", linewidth=2)
     ax2.set_xlabel("Round count R")
-    ax2.set_ylabel("log2(max characteristic probability)")
+    ax2.set_ylabel("log2(best retained trail estimate)")
     ax2.set_xticks(xs)
     ax2.set_title("Log2 probability")
 
-    fig.suptitle(f"{cipher.upper()}32/64 - Classical differential characteristic bound")
+    fig.suptitle(
+        f"{cipher.upper()}32/64 - Classical characteristic beam-search estimate"
+    )
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
@@ -132,6 +190,7 @@ def plot_cipher_comparison(
     neural: dict[int, dict[str, float]],
     classical: dict[int, float],
     out_path: Path,
+    classical_uncertainty: dict[int, dict[str, float]] | None = None,
 ) -> None:
     xs = sorted(set(rounds) & set(neural) & set(classical))
     if not xs:
@@ -148,6 +207,28 @@ def plot_cipher_comparison(
     )
     probabilities = [max(classical[rounds_value], 1e-300) for rounds_value in xs]
     log2_probability = [np.log2(probability) for probability in probabilities]
+    classical_lower = [
+        np.log2(
+            max(
+                (classical_uncertainty or {})
+                .get(rounds_value, {})
+                .get("ci95_low", classical[rounds_value]),
+                1e-300,
+            )
+        )
+        for rounds_value in xs
+    ]
+    classical_upper = [
+        np.log2(
+            max(
+                (classical_uncertainty or {})
+                .get(rounds_value, {})
+                .get("ci95_high", classical[rounds_value]),
+                1e-300,
+            )
+        )
+        for rounds_value in xs
+    ]
 
     sns.set_theme(style="whitegrid", context="paper", font_scale=1.1)
     fig, ax1 = plt.subplots(figsize=(8, 5))
@@ -163,27 +244,37 @@ def plot_cipher_comparison(
         color=color_ai,
         linewidth=2,
         markersize=7,
-        label="AI advantage |acc - 0.5| (95% CI)",
+        label="AI signed accuracy edge 2(acc - 0.5) (95% CI)",
     )
     ax1.set_xlabel("Round count R")
-    ax1.set_ylabel("Neural advantage", color=color_ai)
+    ax1.set_ylabel("Neural signed accuracy edge", color=color_ai)
     ax1.tick_params(axis="y", labelcolor=color_ai)
     ax1.set_xticks(xs)
     ax1.grid(True, alpha=0.3)
+    ax1.axhline(0.0, color=color_ai, linewidth=1, alpha=0.35)
 
     ax2 = ax1.twinx()
-    ax2.plot(
+    ax2.errorbar(
         xs,
         log2_probability,
-        "s--",
+        yerr=np.vstack(
+            [
+                np.asarray(log2_probability) - classical_lower,
+                np.asarray(classical_upper) - log2_probability,
+            ]
+        ),
+        fmt="s--",
+        capsize=4,
         color=color_classical,
         linewidth=2,
         markersize=7,
-        label="Classical log2(p_max)",
+        label="Classical log2(best retained trail estimate)",
     )
-    ax2.set_ylabel("log2(max characteristic probability)", color=color_classical)
+    ax2.set_ylabel("log2(best retained trail estimate)", color=color_classical)
     ax2.tick_params(axis="y", labelcolor=color_classical)
-    ax1.set_title(f"{cipher.upper()}32/64 - Neural distinguisher vs classical DDT bound")
+    ax1.set_title(
+        f"{cipher.upper()}32/64 - Neural distinguisher vs classical estimate"
+    )
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
@@ -213,6 +304,7 @@ def run_compare(
     delta = tuple(cfg.get("input_delta", list(DEFAULT_INPUT_DELTA)))
     seed = int(cfg.get("seed", 1))
     top_k = int(classical_cfg.get("top_k_dp", 32))
+    repetitions = int(classical_cfg.get("monte_carlo_repetitions", 1))
     sample_counts = {
         "simon": int(classical_cfg.get("n_samples_simon", 250_000)),
         "speck": int(classical_cfg.get("n_samples_speck", 1_000_000)),
@@ -221,12 +313,35 @@ def run_compare(
     if isinstance(cipher_names, str):
         cipher_names = [cipher_names]
 
+    manifest_path = results_path / "manifest.json"
+    manifest: dict | None = None
+    if manifest_path.exists():
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        parameters = manifest.get("parameters", {})
+        mismatches = {}
+        if parameters.get("input_delta") != list(delta):
+            mismatches["input_delta"] = (
+                parameters.get("input_delta"),
+                list(delta),
+            )
+        manifest_rounds = set(parameters.get("rounds", []))
+        if not set(rounds).issubset(manifest_rounds):
+            mismatches["rounds"] = (sorted(manifest_rounds), list(rounds))
+        manifest_ciphers = set(parameters.get("ciphers", []))
+        if not set(cipher_names).issubset(manifest_ciphers):
+            mismatches["ciphers"] = (sorted(manifest_ciphers), list(cipher_names))
+        if mismatches:
+            raise ValueError(
+                f"Results manifest does not match requested comparison: {mismatches}"
+            )
+
     outputs: list[Path] = []
     for cipher in cipher_names:
         neural_path = results_path / f"{cipher}_multi_seed_raw.csv"
         neural = load_neural_sweep(neural_path)
         require_neural_overlap(cipher, rounds, neural, neural_path)
-        classical = ensure_classical_bounds(
+        classical = ensure_classical_estimates(
             cipher,
             rounds,
             delta,
@@ -234,21 +349,35 @@ def run_compare(
             n_samples_row=sample_counts[cipher],
             top_k=top_k,
             seed=seed,
+            repetitions=repetitions,
             force=force_classical,
         )
+        classical_uncertainty = load_classical_uncertainty_csv(
+            results_path / f"{cipher}_classical_bounds.csv"
+        )
         classical_path = results_path / f"{cipher}_classical_ddt.png"
-        plot_classical_bounds(cipher, rounds, classical, classical_path)
+        plot_classical_estimates(
+            cipher,
+            rounds,
+            classical,
+            classical_path,
+            uncertainty=classical_uncertainty,
+        )
         outputs.append(classical_path)
         print(f"[compare] saved {classical_path}")
         out_path = results_path / f"{cipher}_vs_classical.png"
-        plot_cipher_comparison(cipher, rounds, neural, classical, out_path)
+        plot_cipher_comparison(
+            cipher,
+            rounds,
+            neural,
+            classical,
+            out_path,
+            classical_uncertainty=classical_uncertainty,
+        )
         outputs.append(out_path)
         print(f"[compare] saved {out_path}")
 
-    manifest_path = results_path / "manifest.json"
-    if manifest_path.exists():
-        with open(manifest_path, encoding="utf-8") as handle:
-            manifest = json.load(handle)
+    if manifest is not None:
         manifest["artifacts"] = artifact_inventory(results_path)
         expected_ciphers = manifest.get("parameters", {}).get("ciphers", cipher_names)
         expected_outputs = [
@@ -267,7 +396,7 @@ def run_compare(
             == manifest.get("parameters", {}).get("seeds")
         ):
             manifest["status"] = "completed"
-            manifest["completed_at"] = utc_now()
+        record_postprocessing(manifest, "neural_vs_classical_plots")
         write_manifest(manifest_path, manifest)
     return outputs
 
@@ -281,7 +410,9 @@ def resolve_config_path(config: Path | None = None, profile: str | None = None) 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot AI vs classical differential bounds")
+    parser = argparse.ArgumentParser(
+        description="Plot AI metrics vs classical characteristic estimates"
+    )
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--profile", choices=["full", "quick"], default=None)
     parser.add_argument("--cipher", action="append", choices=["simon", "speck"])

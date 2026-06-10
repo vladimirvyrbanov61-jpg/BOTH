@@ -32,3 +32,4 @@ classical:
   n_samples_speck: 50000
   n_samples_simon: 20000
   top_k_dp: 16
+  monte_carlo_repetitions: 2

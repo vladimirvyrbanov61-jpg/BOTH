@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from datetime import datetime
@@ -15,7 +16,13 @@ if str(_REPO_ROOT) not in sys.path:
 
 from thesis.config.loader import config_path_for_profile, load_config
 from thesis.eval.compare import run_compare
-from thesis.eval.manifest import artifact_inventory, build_manifest, utc_now, write_manifest
+from thesis.eval.manifest import (
+    artifact_inventory,
+    build_manifest,
+    load_artifact_index,
+    utc_now,
+    write_manifest,
+)
 from thesis.eval.plot_results import plot_all
 
 _TEST_FILES = [
@@ -27,6 +34,11 @@ _TEST_FILES = [
     "tests/test_aggregate.py",
     "tests/test_compare_experiments.py",
     "tests/test_config_validation.py",
+    "tests/test_metrics.py",
+    "tests/test_cipher_profile_cache.py",
+    "Simon/test_simon.py",
+    "Speck/test_speck.py",
+    "Speck/test_speck3264.py",
 ]
 
 
@@ -40,6 +52,7 @@ def run_seed_sweep(
     results_dir: Optional[Path] = None,
     skip_tests: bool = False,
     force_regen: bool = False,
+    force_classical: bool = False,
     fresh_csv_first_seed: bool = True,
 ) -> None:
     """Run round-sweep for each seed sequentially.
@@ -67,6 +80,13 @@ def run_seed_sweep(
     fresh_csv_first_seed : bool
         Delete multi_seed_raw.csv before first seed run (append for subsequent seeds).
     """
+    if not seeds:
+        raise ValueError("at least one seed is required")
+    if any(isinstance(seed, bool) or not isinstance(seed, int) or seed < 0 for seed in seeds):
+        raise ValueError("seeds must be non-negative integers")
+    if len(set(seeds)) != len(seeds):
+        raise ValueError("seeds must be distinct")
+
     config_path = config or config_path_for_profile(profile)
     resolved_config = load_config(config_path)
     if results_dir is None:
@@ -88,9 +108,12 @@ def run_seed_sweep(
             "ciphers": cipher_names,
             "rounds": resolved_config.get("rounds"),
             "n_samples_per_round": resolved_config.get("n_samples_per_round"),
+            "train_ratio": resolved_config.get("train_ratio"),
+            "val_ratio": resolved_config.get("val_ratio"),
             "input_delta": resolved_config.get("input_delta"),
             "training": resolved_config.get("training", {}),
             "force_regen": force_regen,
+            "force_classical": force_classical,
             "fresh_csv_first_seed": fresh_csv_first_seed,
             "test_gate": not skip_tests,
         },
@@ -163,13 +186,29 @@ def run_seed_sweep(
             raise SystemExit(ret)
 
         manifest["progress"]["completed_seeds"].append(seed)
+        manifest["external_artifacts"] = load_artifact_index(
+            results_dir / "external_artifacts.json"
+        )
         manifest["artifacts"] = artifact_inventory(results_dir)
         write_manifest(manifest_path, manifest)
         print(f"\n[SEED {seed}] Completed successfully.\n")
 
+    manifest["training_completed_at"] = utc_now()
+    manifest["external_artifacts"] = load_artifact_index(
+        results_dir / "external_artifacts.json"
+    )
+    write_manifest(manifest_path, manifest)
+
     try:
         plot_all(results_dir, list(cipher_names))
-        run_compare(config_path, ciphers=list(cipher_names), results_dir=results_dir)
+        run_compare(
+            config_path,
+            ciphers=list(cipher_names),
+            results_dir=results_dir,
+            force_classical=force_classical,
+        )
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
     except KeyboardInterrupt:
         manifest["status"] = "interrupted"
         manifest["failure"] = {"stage": "classical_comparison", "reason": "keyboard_interrupt"}
@@ -189,7 +228,8 @@ def run_seed_sweep(
         write_manifest(manifest_path, manifest)
         raise
     manifest["status"] = "completed"
-    manifest["completed_at"] = utc_now()
+    completed_at = utc_now()
+    manifest["completed_at"] = completed_at
     manifest["artifacts"] = artifact_inventory(results_dir)
     write_manifest(manifest_path, manifest)
 
@@ -260,6 +300,11 @@ def main() -> None:
         help="Regenerate cached datasets",
     )
     parser.add_argument(
+        "--force-classical",
+        action="store_true",
+        help="Recompute classical bounds even when validated cached bounds exist",
+    )
+    parser.add_argument(
         "--fresh-csv",
         action="store_true",
         help="Delete multi_seed_raw.csv before first seed run",
@@ -278,6 +323,7 @@ def main() -> None:
         results_dir=args.results_dir,
         skip_tests=args.skip_tests,
         force_regen=args.force_regen,
+        force_classical=args.force_classical,
         fresh_csv_first_seed=args.fresh_csv,
     )
 

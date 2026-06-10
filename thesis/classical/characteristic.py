@@ -1,4 +1,4 @@
-"""R-round maximum differential characteristic probability (max-trail composition)."""
+"""R-round beam-search estimate of maximum characteristic probability."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from thesis.classical.ddt_simon import (
 from thesis.classical.ddt_speck import compute_speck_round_ddt
 
 CipherName = Literal["simon", "speck"]
+CLASSICAL_SCHEMA_VERSION = 3
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -47,7 +48,7 @@ def _expand_transition_rows(
         )
 
 
-def max_characteristic_probability(
+def estimate_max_characteristic_probability(
     cipher: CipherName,
     rounds: int,
     delta_in: Delta32,
@@ -57,10 +58,11 @@ def max_characteristic_probability(
     seed: int = 0,
     use_simon_f_exact: bool = True,
 ) -> tuple[float, list[Delta32]]:
-    """Maximum R-round characteristic probability along a single differential trail.
+    """Estimate the best retained R-round differential trail.
 
-    Uses repeated 1-round conditional distributions P(Δ_{r+1} | Δ_r) with
-    max-product dynamic programming (best trail, not sum over all trails).
+    SIMON round transitions are exact and SPECK rows are sampled, but top-k
+    pruning makes the multi-round search non-exhaustive. The returned value is
+    a beam-search estimate, not a formal probability bound.
     """
     if rounds < 1:
         return 1.0, [delta_in]
@@ -72,10 +74,11 @@ def max_characteristic_probability(
     transition_cache: dict[Delta32, dict[Delta32, float]] = {}
 
     states: dict[Delta32, float] = {delta_in: 1.0}
-    trail: list[Delta32] = [delta_in]
+    parent_layers: list[dict[Delta32, Delta32]] = []
 
     for r in range(rounds):
         nxt: dict[Delta32, float] = {}
+        parents: dict[Delta32, Delta32] = {}
         for d_in, p_in in states.items():
             _expand_transition_rows(
                 cipher,
@@ -90,23 +93,37 @@ def max_characteristic_probability(
                 cand = p_in * p_cond
                 if cand > nxt.get(d_out, 0.0):
                     nxt[d_out] = cand
+                    parents[d_out] = d_in
         if not nxt:
-            return 0.0, trail
+            return 0.0, [delta_in]
         states = prune_top_k(nxt, top_k)
-        trail.append(max(states, key=states.get))
+        parent_layers.append({state: parents[state] for state in states})
 
-    return max(states.values()), trail
+    best = max(states, key=states.get)
+    trail = [best]
+    for parents in reversed(parent_layers):
+        trail.append(parents[trail[-1]])
+    trail.reverse()
+    return states[best], trail
 
 
-def max_characteristic_from_fixed_transition(
+def estimate_max_characteristic_from_fixed_transition(
     delta_in: Delta32,
     transition: dict[Delta32, dict[Delta32, float]],
     rounds: int,
     *,
     top_k: int = 32,
 ) -> tuple[float, list[Delta32]]:
-    """Compose R rounds from a precomputed sparse transition matrix."""
+    """Estimate the best retained trail from a fixed sparse transition matrix."""
     return max_trail_probability(delta_in, transition, rounds, top_k=top_k)
+
+
+# Compatibility aliases for callers using the pre-schema-3 API. New code
+# should use the estimate_* names because top-k pruning is not a formal bound.
+max_characteristic_probability = estimate_max_characteristic_probability
+max_characteristic_from_fixed_transition = (
+    estimate_max_characteristic_from_fixed_transition
+)
 
 
 def track_characteristic_over_rounds(
@@ -150,11 +167,21 @@ def track_characteristic_over_rounds(
         states = prune_top_k(nxt, top_k) if nxt else {}
         if round_index in requested_rounds:
             rows_by_round[round_index] = {
+                "schema_version": CLASSICAL_SCHEMA_VERSION,
                 "cipher": cipher,
                 "rounds": round_index,
                 "delta_in": delta_in,
                 "max_characteristic_prob": max(states.values()) if states else 0.0,
                 "trail_len": round_index + 1,
+                "method": (
+                    "exact_f_ddt_beam_search"
+                    if cipher == "simon"
+                    else "monte_carlo_beam_search"
+                ),
+                "is_formal_bound": False,
+                "n_samples_row": n_samples_row,
+                "top_k": top_k,
+                "seed": seed,
             }
 
     return [rows_by_round[rounds] for rounds in round_list]
@@ -165,32 +192,134 @@ def save_classical_bounds_csv(
     rows: list[dict[str, Any]],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["cipher", "rounds", "max_characteristic_prob", "delta_left", "delta_right"]
-    write_header = not path.exists()
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        if write_header:
+    fields = [
+        "schema_version",
+        "cipher",
+        "rounds",
+        "max_characteristic_prob",
+        "delta_left",
+        "delta_right",
+        "method",
+        "is_formal_bound",
+        "n_samples_row",
+        "top_k",
+        "seed",
+        "repetitions",
+        "probability_std",
+        "probability_ci95_low",
+        "probability_ci95_high",
+    ]
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
             w.writeheader()
-        for row in rows:
-            d = row["delta_in"]
-            w.writerow(
-                {
-                    "cipher": row["cipher"],
-                    "rounds": row["rounds"],
-                    "max_characteristic_prob": row["max_characteristic_prob"],
-                    "delta_left": d[0],
-                    "delta_right": d[1],
-                }
-            )
+            for row in rows:
+                d = row["delta_in"]
+                w.writerow(
+                    {
+                        "schema_version": row["schema_version"],
+                        "cipher": row["cipher"],
+                        "rounds": row["rounds"],
+                        "max_characteristic_prob": row["max_characteristic_prob"],
+                        "delta_left": d[0],
+                        "delta_right": d[1],
+                        "method": row["method"],
+                        "is_formal_bound": str(
+                            bool(row.get("is_formal_bound", False))
+                        ).lower(),
+                        "n_samples_row": row["n_samples_row"],
+                        "top_k": row["top_k"],
+                        "seed": row["seed"],
+                        "repetitions": row.get("repetitions", 1),
+                        "probability_std": row.get("probability_std", 0.0),
+                        "probability_ci95_low": row.get(
+                            "probability_ci95_low",
+                            row["max_characteristic_prob"],
+                        ),
+                        "probability_ci95_high": row.get(
+                            "probability_ci95_high",
+                            row["max_characteristic_prob"],
+                        ),
+                    }
+                )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def load_classical_bounds_csv(path: Path) -> dict[int, float]:
-    """Map rounds → max_characteristic_prob."""
+def load_classical_bounds_csv(
+    path: Path,
+    *,
+    expected: dict[str, Any] | None = None,
+) -> dict[int, float]:
+    """Map rounds to best-retained characteristic-probability estimates."""
     out: dict[int, float] = {}
     if not path.exists():
         return out
     with open(path, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            out[int(row["rounds"])] = float(row["max_characteristic_prob"])
+        rows = list(csv.DictReader(f))
+        if expected:
+            expected_method = (
+                "exact_f_ddt_beam_search"
+                if expected["cipher"] == "simon"
+                else "monte_carlo_beam_search"
+            )
+            required = {
+                "schema_version": str(CLASSICAL_SCHEMA_VERSION),
+                "cipher": str(expected["cipher"]),
+                "delta_left": str(int(expected["delta"][0])),
+                "delta_right": str(int(expected["delta"][1])),
+                "n_samples_row": str(int(expected["n_samples_row"])),
+                "top_k": str(int(expected["top_k"])),
+                "seed": str(int(expected["seed"])),
+                "repetitions": str(int(expected["repetitions"])),
+                "is_formal_bound": "false",
+                "method": expected_method,
+            }
+            for row in rows:
+                mismatches = {
+                    key: (row.get(key), value)
+                    for key, value in required.items()
+                    if row.get(key) != value
+                }
+                if mismatches:
+                    return {}
+        for row in rows:
+            rounds = int(row["rounds"])
+            probability = float(row["max_characteristic_prob"])
+            low = float(row.get("probability_ci95_low") or probability)
+            high = float(row.get("probability_ci95_high") or probability)
+            if (
+                rounds < 1
+                or rounds in out
+                or not 0.0 <= low <= probability <= high <= 1.0
+            ):
+                return {}
+            out[rounds] = probability
     return out
+
+
+def load_classical_uncertainty_csv(path: Path) -> dict[int, dict[str, float]]:
+    """Load mean and repeated-Monte-Carlo confidence limits by round."""
+    if not path.exists():
+        return {}
+    output: dict[int, dict[str, float]] = {}
+    with open(path, encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            mean = float(row["max_characteristic_prob"])
+            rounds = int(row["rounds"])
+            low = float(row.get("probability_ci95_low") or mean)
+            high = float(row.get("probability_ci95_high") or mean)
+            if (
+                rounds < 1
+                or rounds in output
+                or not 0.0 <= low <= mean <= high <= 1.0
+            ):
+                raise ValueError(f"invalid classical uncertainty row in {path}")
+            output[rounds] = {
+                "mean": mean,
+                "ci95_low": low,
+                "ci95_high": high,
+            }
+    return output

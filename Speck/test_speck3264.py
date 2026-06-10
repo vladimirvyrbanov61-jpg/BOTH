@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from speck3264 import ROUNDS, Speck3264
-from speck3264.cipher import ALPHA, BETA
-from test_speck import TestSpeck3264OfficialVector
+from Speck.speck3264 import ROUNDS, Speck3264
+from Speck.speck3264.cipher import ALPHA, BETA
+from Speck.test_speck import TestSpeck3264OfficialVector
 
 
 class TestSpeck3264Cipher:

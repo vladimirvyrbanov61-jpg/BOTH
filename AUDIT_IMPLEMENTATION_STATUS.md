@@ -1,0 +1,61 @@
+# Audit Implementation Status
+
+Date: 2026-06-10
+
+The current schema-5 maintained pipeline implements the corrective audit plan.
+
+## Corrected
+
+- Signed accuracy and AUC edges replace absolute accuracy deviation as the
+  scientific comparison metrics.
+- Per-seed accuracy includes a two-sided random-guessing p-value.
+- Decision thresholds are selected on validation data only.
+- Base samples and splits are held constant across round counts within a seed.
+- SPECK classical estimates support repeated Monte Carlo runs and confidence
+  intervals; top-k results are explicitly labeled non-exhaustive beam-search
+  estimates rather than formal bounds.
+- Classical CSV reuse validates cipher, delta, sample count, top-k setting,
+  seed, repetition count, and schema.
+- Input-difference comparisons enforce matching controlled configuration,
+  training parameters, dependency environment, and source hash.
+- Paired comparison tests include Holm-adjusted p-values.
+- SIMON and SPECK batched-key cache identities include every key in the batch.
+- Classical trails are reconstructed with parent pointers.
+- Manifests hash maintained source and separate training completion from later
+  post-processing.
+- Manifests index SHA-256 hashes for exact caches, checkpoints, and TensorBoard
+  event files used by each seed/cipher/round.
+- Checkpoints include experiment metadata and validation-selected thresholds.
+- Checkpoint paths include the run identifier, preventing silent overwrite between runs.
+- CSV, manifest, checkpoint, and cache writes use temporary-file replacement.
+- TensorBoard output is isolated by run identifier.
+- Runtime overrides are validated after resolution.
+- Active imports use installable packages rather than `sys.path` mutation.
+- Full cipher suites are included in the local experiment test gate.
+- CI, `pyproject.toml`, dependency constraints, and artifact ignore rules exist.
+- Generated caches, checkpoints, TensorBoard events, and IDE state have been
+  removed from current Git tracking while remaining available locally.
+
+## Experiment Compatibility
+
+Existing June 2026 neural raw CSVs can be re-aggregated into signed metrics
+without retraining because they contain accuracy and AUC. Their original model
+training, however, predates validation-threshold calibration, shared round
+samples, checkpoint schema 2, and source-tree hashing.
+
+For final thesis publication, run fresh baseline and `(0x0040, 0x0000)`
+experiments with the current code and `--force-classical`. Older runs remain
+historical evidence and should not be described as schema-5 experiments.
+
+## Remaining Scientific Boundaries
+
+- The project implements statistical distinguishers, not key recovery.
+- SPECK characteristic tracking remains a sampled, top-k approximation.
+- SIMON characteristic tracking also uses top-k beam pruning after exact
+  one-round transition construction, so its multi-round result is an estimate.
+- Neural signed edge and classical characteristic probability are different
+  quantities and remain plotted on separate axes.
+- The two selected input differences do not establish generalization to all
+  differences.
+
+These are explicit thesis-scope limitations rather than unresolved code errors.

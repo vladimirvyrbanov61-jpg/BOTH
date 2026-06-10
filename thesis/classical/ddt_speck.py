@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Dict, Iterator
 
 import numpy as np
@@ -16,11 +14,7 @@ from thesis.classical.ddt_core import (
     validate_probabilities,
 )
 
-_SPECK_ROOT = Path(__file__).resolve().parents[2] / "Speck"
-if str(_SPECK_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SPECK_ROOT))
-
-from speck import _enc_round  # noqa: E402
+from Speck.speck import _enc_round
 
 N_BITS = 16
 ALPHA = 7

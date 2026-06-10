@@ -13,9 +13,9 @@ def _aggregate(mean: float, low: float, high: float) -> dict[str, float]:
         "auc_roc_mean": mean,
         "auc_roc_ci95_low": low,
         "auc_roc_ci95_high": high,
-        "advantage_abs_mean": mean - 0.5,
-        "advantage_abs_ci95_low": low - 0.5,
-        "advantage_abs_ci95_high": high - 0.5,
+        "advantage_edge_mean": 2.0 * (mean - 0.5),
+        "advantage_edge_ci95_low": 2.0 * (low - 0.5),
+        "advantage_edge_ci95_high": 2.0 * (high - 0.5),
     }
 
 

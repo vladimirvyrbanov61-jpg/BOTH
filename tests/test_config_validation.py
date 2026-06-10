@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 
 import pytest
 
 from thesis.config.loader import config_path_for_profile, load_config, validate_config
+from scripts.multi_seed_sweep import run_seed_sweep
 
 
 def test_shipped_profiles_are_valid() -> None:
@@ -40,4 +42,20 @@ def test_odd_sample_count_is_rejected() -> None:
     invalid["n_samples_per_round"] = 101
 
     with pytest.raises(ValueError, match="must be even"):
+        validate_config(invalid)
+
+
+@pytest.mark.parametrize("seeds", [[], [1, 1], [-1]])
+def test_seed_sweep_rejects_invalid_seed_lists(seeds) -> None:
+    with pytest.raises(ValueError):
+        run_seed_sweep(seeds, skip_tests=True)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_non_finite_training_numbers_are_rejected(value) -> None:
+    config = load_config(config_path_for_profile("quick"))
+    invalid = deepcopy(config)
+    invalid["training"]["lr"] = value
+
+    with pytest.raises(ValueError, match="must be finite"):
         validate_config(invalid)

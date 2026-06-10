@@ -23,7 +23,7 @@ from thesis.models.cnn_distinguisher import (
     CnnDistinguisher,
     build_model,
 )
-from thesis.models.train import load_distinguisher
+from thesis.models.train import _resolve_device, load_distinguisher
 
 
 def test_bit_pair_reshape():
@@ -70,11 +70,22 @@ def test_checkpoint_load_uses_tensor_only_mode(tmp_path):
     checkpoint = tmp_path / "model.pt"
     torch.save(
         {
+            "schema_version": 2,
             "state_dict": model.state_dict(),
             "train_config": {"channels": (16, 32)},
+            "experiment": {"input_delta": [1, 0]},
+            "decision_threshold": 0.42,
         },
         checkpoint,
     )
 
     loaded = load_distinguisher(checkpoint, device="cpu")
     assert loaded.count_parameters() == model.count_parameters()
+    assert loaded.decision_threshold == pytest.approx(0.42)
+    assert loaded.checkpoint_metadata["input_delta"] == [1, 0]
+
+
+def test_explicit_cuda_request_fails_clearly_without_cuda(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="CUDA was requested"):
+        _resolve_device("cuda")

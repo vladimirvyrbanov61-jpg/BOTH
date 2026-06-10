@@ -103,3 +103,46 @@ def test_cache_schema_rejects_unexpected_arrays(tmp_path):
 
     with pytest.raises(ValueError, match="cache leak"):
         load_blind_npz(path)
+
+
+def test_cache_schema_rejects_non_binary_features(tmp_path):
+    path = tmp_path / "invalid_features.npz"
+    X = np.zeros((2, 64), dtype=np.float32)
+    X[0, 0] = 0.5
+    np.savez_compressed(
+        path,
+        X=X,
+        y=np.array([0, 1], dtype=np.int8),
+        rounds=np.array([3]),
+    )
+
+    with pytest.raises(ValueError, match="not binary"):
+        load_blind_npz(path)
+
+
+def test_generate_or_load_rejects_unbalanced_cache(tmp_path):
+    out = generate_or_load(
+        "simon",
+        rounds=3,
+        n_samples=100,
+        seed=1,
+        data_dir=tmp_path,
+        force_regen=True,
+    )
+    with np.load(out["cache_path"], allow_pickle=False) as cached:
+        X = cached["X"]
+    np.savez_compressed(
+        out["cache_path"],
+        X=X,
+        y=np.zeros(100, dtype=np.int8),
+        rounds=np.array([3]),
+    )
+
+    with pytest.raises(ValueError, match="not class-balanced"):
+        generate_or_load(
+            "simon",
+            rounds=3,
+            n_samples=100,
+            seed=1,
+            data_dir=tmp_path,
+        )

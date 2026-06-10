@@ -16,8 +16,10 @@ def test_aggregate_rows_reports_sample_uncertainty() -> None:
         "auc_roc": 0.7,
         "tpr": 0.7,
         "tnr": 0.7,
-        "advantage_abs": 0.2,
+        "accuracy_advantage": 0.1,
         "advantage_edge": 0.4,
+        "auc_advantage": 0.4,
+        "accuracy_null_p_value": 0.01,
         "youden_j": 0.4,
     }
     rows = [
@@ -38,6 +40,10 @@ def test_aggregate_rows_reports_sample_uncertainty() -> None:
     assert row["accuracy_ci95_low"] < row["accuracy_mean"] < row["accuracy_ci95_high"]
     assert row["accuracy_ci95_low"] == 0.0
     assert row["accuracy_ci95_high"] == 1.0
+    assert row["accuracy_null_p_value_fisher"] == pytest.approx(
+        0.0010210340371976192
+    )
+    assert "accuracy_null_p_value_mean" not in row
 
 
 def test_ten_seed_interval_uses_student_t() -> None:

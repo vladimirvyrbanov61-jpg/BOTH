@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,9 @@ COMPARISON_FIELDS = [
     "paired_difference_ci95_low",
     "paired_difference_ci95_high",
     "paired_difference_excludes_zero",
+    "paired_p_value",
+    "paired_p_value_holm",
+    "paired_significant_holm",
 ]
 
 
@@ -63,6 +68,43 @@ def _validate_manifest(
         )
     if manifest.get("status") != "completed":
         raise ValueError(f"Experiment status must be completed, found {manifest.get('status')}")
+
+
+def _controlled_manifest_view(manifest: dict[str, Any]) -> dict[str, Any]:
+    config = deepcopy(manifest.get("config", {}).get("resolved", {}))
+    for key in ("input_delta", "model_dir", "results_dir"):
+        config.pop(key, None)
+    parameters = deepcopy(manifest.get("parameters", {}))
+    for key in ("input_delta", "force_regen", "fresh_csv_first_seed"):
+        parameters.pop(key, None)
+    environment = manifest.get("environment", {})
+    return {
+        "config": config,
+        "parameters": parameters,
+        "dependencies": environment.get("dependencies"),
+        "python": environment.get("python"),
+        "source_sha256": manifest.get("source", {}).get("sha256"),
+    }
+
+
+def _validate_controlled_pair(
+    baseline_manifest: dict[str, Any],
+    candidate_manifest: dict[str, Any],
+) -> None:
+    baseline = _controlled_manifest_view(baseline_manifest)
+    candidate = _controlled_manifest_view(candidate_manifest)
+    for key in ("config", "parameters", "dependencies", "python"):
+        if baseline[key] != candidate[key]:
+            raise ValueError(
+                f"Experiments differ in controlled field {key}: "
+                f"{baseline[key]!r} != {candidate[key]!r}"
+            )
+    if (
+        baseline["source_sha256"] is not None
+        and candidate["source_sha256"] is not None
+        and baseline["source_sha256"] != candidate["source_sha256"]
+    ):
+        raise ValueError("Experiments were produced from different maintained source trees")
 
 
 def _load_aggregates(
@@ -133,7 +175,7 @@ def build_comparison_rows(
     baseline: dict[str, dict[int, dict[str, Any]]],
     candidate: dict[str, dict[int, dict[str, Any]]],
     *,
-    metrics: tuple[str, ...] = ("auc_roc", "advantage_abs"),
+    metrics: tuple[str, ...] = ("auc_roc", "advantage_edge"),
     baseline_raw: dict[str, dict[int, dict[int, dict[str, Any]]]] | None = None,
     candidate_raw: dict[str, dict[int, dict[int, dict[str, Any]]]] | None = None,
 ) -> list[dict[str, Any]]:
@@ -166,6 +208,9 @@ def build_comparison_rows(
                     "paired_difference_ci95_low": "",
                     "paired_difference_ci95_high": "",
                     "paired_difference_excludes_zero": "",
+                    "paired_p_value": "",
+                    "paired_p_value_holm": "",
+                    "paired_significant_holm": "",
                 }
                 if baseline_raw is not None and candidate_raw is not None:
                     base_seed_rows = baseline_raw[cipher][rounds]
@@ -180,6 +225,14 @@ def build_comparison_rows(
                         for seed in sorted(base_seed_rows)
                     ]
                     paired = summarize_values(differences)
+                    from scipy.stats import ttest_1samp
+
+                    if np.allclose(differences, differences[0]):
+                        p_value = 0.0 if differences[0] != 0.0 else 1.0
+                    else:
+                        p_value = float(
+                            ttest_1samp(differences, popmean=0.0).pvalue
+                        )
                     comparison.update(
                         {
                             "paired_n": len(differences),
@@ -189,18 +242,49 @@ def build_comparison_rows(
                             "paired_difference_excludes_zero": (
                                 paired["ci95_low"] > 0.0 or paired["ci95_high"] < 0.0
                             ),
+                            "paired_p_value": p_value,
                         }
                     )
                 rows.append(comparison)
+    tested = [
+        (index, float(row["paired_p_value"]))
+        for index, row in enumerate(rows)
+        if row["paired_p_value"] != ""
+    ]
+    ordered = sorted(tested, key=lambda item: item[1])
+    running = 0.0
+    total = len(ordered)
+    for rank, (index, p_value) in enumerate(ordered):
+        adjusted = min(1.0, (total - rank) * p_value)
+        running = max(running, adjusted)
+        rows[index]["paired_p_value_holm"] = running
+        rows[index]["paired_significant_holm"] = running < 0.05
     return rows
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=COMPARISON_FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=COMPARISON_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _plot_metric(
@@ -263,6 +347,7 @@ def compare_experiments(
         expected_seeds=seeds,
         expected_rounds=rounds,
     )
+    _validate_controlled_pair(baseline_manifest, candidate_manifest)
     _validate_manifest(
         candidate_manifest,
         expected_delta=[0x0040, 0],
@@ -284,7 +369,7 @@ def compare_experiments(
     _write_csv(csv_path, rows)
     outputs = [csv_path]
     for cipher in ciphers:
-        for metric in ("auc_roc", "advantage_abs"):
+        for metric in ("auc_roc", "advantage_edge"):
             plot_path = output_dir / f"{cipher}_{metric}_input_delta_comparison.png"
             _plot_metric(
                 cipher,
@@ -295,6 +380,31 @@ def compare_experiments(
                 "Delta=(0x0040, 0x0000)",
             )
             outputs.append(plot_path)
+    comparison_manifest = output_dir / "comparison_manifest.json"
+    _write_json(
+        comparison_manifest,
+        {
+            "schema_version": 1,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "baseline_results_dir": str(baseline_dir.resolve()),
+            "candidate_results_dir": str(candidate_dir.resolve()),
+            "metrics": ["auc_roc", "advantage_edge"],
+            "multiple_testing_correction": "Holm",
+            "baseline_manifest": {
+                "config_sha256": baseline_manifest.get("config", {}).get("sha256"),
+                "source_sha256": baseline_manifest.get("source", {}).get("sha256"),
+                "input_delta": baseline_manifest.get("parameters", {}).get("input_delta"),
+            },
+            "candidate_manifest": {
+                "config_sha256": candidate_manifest.get("config", {}).get("sha256"),
+                "source_sha256": candidate_manifest.get("source", {}).get("sha256"),
+                "input_delta": candidate_manifest.get("parameters", {}).get("input_delta"),
+            },
+            "controlled_manifest_view": _controlled_manifest_view(baseline_manifest),
+            "outputs": [str(path.resolve()) for path in outputs],
+        },
+    )
+    outputs.append(comparison_manifest)
     return outputs
 
 

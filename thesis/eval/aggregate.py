@@ -9,13 +9,16 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from thesis.eval.metrics import accuracy_null_p_value
+
 METRICS = (
     "accuracy",
     "auc_roc",
     "tpr",
     "tnr",
-    "advantage_abs",
+    "accuracy_advantage",
     "advantage_edge",
+    "auc_advantage",
     "youden_j",
 )
 
@@ -24,8 +27,9 @@ METRIC_BOUNDS: dict[str, tuple[float, float]] = {
     "auc_roc": (0.0, 1.0),
     "tpr": (0.0, 1.0),
     "tnr": (0.0, 1.0),
-    "advantage_abs": (0.0, 0.5),
-    "advantage_edge": (0.0, 1.0),
+    "accuracy_advantage": (-0.5, 0.5),
+    "advantage_edge": (-1.0, 1.0),
+    "auc_advantage": (-1.0, 1.0),
     "youden_j": (-1.0, 1.0),
 }
 
@@ -69,6 +73,7 @@ AGGREGATE_FIELDS = [
     "n_seeds",
     "seeds",
     "n_samples_total",
+    "accuracy_null_p_value_fisher",
     *[
         f"{metric}_{suffix}"
         for metric in METRICS
@@ -81,7 +86,31 @@ def read_metric_rows(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
     with open(path, newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        rows = list(csv.DictReader(handle))
+    for row in rows:
+        if row.get("accuracy") not in (None, ""):
+            accuracy = float(row["accuracy"])
+            row.setdefault("accuracy_advantage", str(accuracy - 0.5))
+            row["accuracy_advantage"] = row.get("accuracy_advantage") or str(
+                accuracy - 0.5
+            )
+            row["advantage_edge"] = row.get("advantage_edge") or str(
+                2.0 * (accuracy - 0.5)
+            )
+            if "advantage_abs" in row:
+                row.pop("advantage_abs", None)
+            if row.get("accuracy_null_p_value") in (None, ""):
+                n_samples = int(row["n_samples"])
+                correct = int(round(accuracy * n_samples))
+                row["accuracy_null_p_value"] = str(
+                    accuracy_null_p_value(correct, n_samples)
+                )
+        if row.get("auc_roc") not in (None, ""):
+            auc = float(row["auc_roc"])
+            row["auc_advantage"] = row.get("auc_advantage") or str(
+                2.0 * (auc - 0.5)
+            )
+    return rows
 
 
 def student_t_critical_95(n_samples: int) -> float:
@@ -159,16 +188,36 @@ def aggregate_rows(
                 bounds=METRIC_BOUNDS[metric],
             ).items():
                 aggregate[f"{metric}_{suffix}"] = value
+        p_values = [
+            float(row["accuracy_null_p_value"])
+            for row in group
+            if row.get("accuracy_null_p_value") not in (None, "")
+        ]
+        if p_values:
+            from scipy.stats import combine_pvalues
+
+            aggregate["accuracy_null_p_value_fisher"] = float(
+                combine_pvalues(p_values, method="fisher").pvalue
+            )
         output.append(aggregate)
     return output
 
 
 def write_aggregate_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=AGGREGATE_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=AGGREGATE_FIELDS,
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def aggregate_csv(raw_path: Path, output_path: Path | None = None) -> tuple[list[dict[str, Any]], Path]:
