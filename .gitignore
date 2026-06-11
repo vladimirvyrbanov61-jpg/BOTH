@@ -35,3 +35,4 @@ events.out.tfevents.*
 
 # Local historical/generated backups retained outside version control
 Archive/backup_*/
+/Archive/[0-9]*/

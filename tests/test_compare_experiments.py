@@ -58,6 +58,39 @@ def test_build_comparison_rows_detects_interval_overlap() -> None:
     assert rows[0]["paired_difference_excludes_zero"] is True
 
 
+def test_paired_test_does_not_treat_nearly_constant_differences_as_exact() -> None:
+    baseline = {"simon": {3: _aggregate(0.8, 0.75, 0.85)}}
+    candidate = {"simon": {3: _aggregate(0.800000002, 0.75, 0.85)}}
+    baseline_raw = {
+        "simon": {
+            3: {
+                1: {"auc_roc": 0.8},
+                2: {"auc_roc": 0.8},
+                3: {"auc_roc": 0.8},
+            }
+        }
+    }
+    candidate_raw = {
+        "simon": {
+            3: {
+                1: {"auc_roc": 0.800000001},
+                2: {"auc_roc": 0.800000002},
+                3: {"auc_roc": 0.800000003},
+            }
+        }
+    }
+
+    row = build_comparison_rows(
+        baseline,
+        candidate,
+        metrics=("auc_roc",),
+        baseline_raw=baseline_raw,
+        candidate_raw=candidate_raw,
+    )[0]
+
+    assert 0.0 < row["paired_p_value"] < 1.0
+
+
 def test_delta_profile_only_changes_controlled_fields() -> None:
     baseline = load_config(config_path_for_profile("full"))
     candidate = load_config("thesis/config/thesis_delta_0040.yaml")

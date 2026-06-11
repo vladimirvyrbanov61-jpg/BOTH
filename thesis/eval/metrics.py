@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 _LOG_10 = float(np.log(10.0))
+CONDITIONAL_NULL_TEST = "conditional_hypergeometric_fixed_margins_v1"
 
 
 def _binary_labels(values: np.ndarray, *, name: str) -> np.ndarray:
@@ -73,6 +74,43 @@ def accuracy_null_p_value(correct: int, n_samples: int) -> float:
     return float(10.0 ** accuracy_null_log10_p_value(correct, n_samples))
 
 
+def conditional_accuracy_null_log10_p_value(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> float:
+    """Exact two-sided accuracy p-value conditional on fixed margins."""
+    labels = _binary_labels(y_true, name="labels")
+    predictions = _binary_labels(y_pred, name="predictions")
+    if len(labels) != len(predictions):
+        raise ValueError("labels and predictions must be aligned")
+
+    n_samples = len(labels)
+    n_positive = int(labels.sum())
+    n_predicted_positive = int(predictions.sum())
+    true_positive = int(np.sum((labels == 1) & (predictions == 1)))
+
+    from scipy.stats import hypergeom
+
+    log_lower = float(
+        hypergeom.logcdf(
+            true_positive,
+            n_samples,
+            n_positive,
+            n_predicted_positive,
+        )
+    )
+    log_upper = float(
+        hypergeom.logsf(
+            true_positive - 1,
+            n_samples,
+            n_positive,
+            n_predicted_positive,
+        )
+    )
+    log_two_sided = min(0.0, float(np.log(2.0)) + min(log_lower, log_upper))
+    return log_two_sided / _LOG_10
+
+
 def classification_metrics(
     y_true: np.ndarray,
     y_score: np.ndarray,
@@ -108,8 +146,7 @@ def classification_metrics(
     advantage_edge = 2.0 * accuracy_advantage
     auc_advantage = 2.0 * (auc - 0.5)
     youden_j = tpr + tnr - 1.0
-    correct = tp + tn
-    null_log10_p = accuracy_null_log10_p_value(correct, len(y_true))
+    null_log10_p = conditional_accuracy_null_log10_p_value(y_true, y_pred)
 
     return {
         "accuracy": acc,
@@ -121,6 +158,7 @@ def classification_metrics(
         "auc_advantage": float(auc_advantage),
         "accuracy_null_p_value": float(10.0**null_log10_p),
         "accuracy_null_log10_p_value": null_log10_p,
+        "accuracy_null_test": CONDITIONAL_NULL_TEST,
         "youden_j": float(youden_j),
         "tp": tp,
         "tn": tn,
@@ -156,6 +194,7 @@ def metrics_row(
                 "auc_advantage",
                 "accuracy_null_p_value",
                 "accuracy_null_log10_p_value",
+                "accuracy_null_test",
                 "youden_j",
             )
         },

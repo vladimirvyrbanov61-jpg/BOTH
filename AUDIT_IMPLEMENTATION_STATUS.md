@@ -2,13 +2,14 @@
 
 Date: 2026-06-11
 
-The current schema-5 maintained pipeline implements the corrective audit plan.
+The current schema-6 maintained pipeline implements the corrective audit plan.
 
 ## Corrected
 
 - Signed accuracy and AUC edges replace absolute accuracy deviation as the
   scientific comparison metrics.
-- Per-seed accuracy includes a two-sided random-guessing p-value.
+- Per-seed accuracy includes a two-sided exact random-label p-value conditional
+  on the fixed class and prediction counts.
 - Decision thresholds are selected on validation data only.
 - Base samples and splits are held constant across round counts within a seed.
 - SPECK classical estimates support repeated Monte Carlo runs and confidence
@@ -19,17 +20,22 @@ The current schema-5 maintained pipeline implements the corrective audit plan.
 - Input-difference comparisons enforce matching controlled configuration,
   training parameters, dependency environment, and source hash.
 - Paired comparison tests include Holm-adjusted p-values.
+- Paired tests distinguish machine-precision constants from genuinely varying
+  seed differences instead of collapsing near-constant samples to p=0.
 - SIMON and SPECK batched-key cache identities include every key in the batch.
 - Classical trails are reconstructed with parent pointers.
-- Manifests hash maintained source and separate training completion from later
-  post-processing.
+- Manifests hash both the full maintained tree and execution-relevant source,
+  and separate training completion from later post-processing.
 - Manifests index SHA-256 hashes for exact caches, checkpoints, and TensorBoard
   event files used by each seed/cipher/round.
 - Checkpoints include experiment metadata and validation-selected thresholds.
 - Checkpoint paths include the run identifier, preventing silent overwrite between runs.
 - CSV, manifest, checkpoint, and cache writes use temporary-file replacement.
 - TensorBoard output is isolated by run identifier.
+- New multi-seed runs reject nonempty result directories, and interruptions in
+  the test gate or seed subprocesses are recorded in the manifest.
 - Runtime overrides are validated after resolution.
+- Unknown top-level, training, and classical configuration keys are rejected.
 - Zero plaintext differences, malformed feature tensors, overlapping dataset
   splits, invalid direct training settings, and mismatched key batches are
   rejected before computation.
@@ -38,6 +44,8 @@ The current schema-5 maintained pipeline implements the corrective audit plan.
 - Active imports use installable packages rather than `sys.path` mutation.
 - Full cipher suites are included in the local experiment test gate.
 - CI, `pyproject.toml`, dependency constraints, and artifact ignore rules exist.
+- `requirements-lock.txt` is a complete freeze of the tested Python 3.13
+  environment rather than a direct-dependency-only list.
 - Generated-directory ignore rules are root-anchored so they do not hide
   maintained source packages such as `thesis/models`.
 - Generated caches, checkpoints, TensorBoard events, timestamped results, and
@@ -45,6 +53,8 @@ The current schema-5 maintained pipeline implements the corrective audit plan.
 - Historical code is isolated under `Archive/`, excluded from package and test
   discovery, and explicitly documented as methodologically incomparable with
   the maintained thesis pipeline.
+- Numbered generated archive snapshots are ignored and no longer tracked,
+  while their local files remain available to the repository owner.
 
 ## Experiment Compatibility
 
@@ -55,7 +65,7 @@ samples, checkpoint schema 2, and source-tree hashing.
 
 For final thesis publication, run fresh baseline and `(0x0040, 0x0000)`
 experiments with the current code and `--force-classical`. Older runs remain
-historical evidence and should not be described as schema-5 experiments.
+historical evidence and should not be described as schema-6 experiments.
 
 ## Remaining Scientific Boundaries
 

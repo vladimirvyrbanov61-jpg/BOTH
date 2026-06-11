@@ -1,7 +1,5 @@
 # Smoke / CI profile — fast round-sweep + compare dry-run (minutes on CPU)
 
-profile: quick
-
 cipher: simon
 
 input_delta: [0x0001, 0x0000]

@@ -15,14 +15,14 @@ Each timestamped run contains:
 
 - `{cipher}_multi_seed_raw.csv`: one test row per seed and round.
 - `{cipher}_aggregate.csv`: seed means, sample dispersion, 95% Student-t
-  intervals, and Fisher-combined null p-values.
+  intervals, the exact null-test method, and Fisher-combined null p-values.
 - `{cipher}_classical_bounds.csv`: legacy filename containing schema-3
   non-exhaustive characteristic estimates and provenance.
 - Neural, classical-estimate, and comparison figures.
 - `external_artifacts.json`: SHA-256 records for caches, checkpoints, and
   TensorBoard events.
-- `manifest.json`: resolved configuration, environment, source hash, progress,
-  lifecycle timestamps, and artifact inventory.
+- `manifest.json`: resolved configuration, environment, full and execution
+  source hashes, progress, lifecycle timestamps, and artifact inventory.
 
 Checkpoints are stored under:
 

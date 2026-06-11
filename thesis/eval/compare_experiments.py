@@ -78,12 +78,18 @@ def _controlled_manifest_view(manifest: dict[str, Any]) -> dict[str, Any]:
     for key in ("input_delta", "force_regen", "fresh_csv_first_seed"):
         parameters.pop(key, None)
     environment = manifest.get("environment", {})
+    source = manifest.get("source", {})
     return {
         "config": config,
         "parameters": parameters,
         "dependencies": environment.get("dependencies"),
         "python": environment.get("python"),
-        "source_sha256": manifest.get("source", {}).get("sha256"),
+        "source_sha256": source.get("execution_sha256") or source.get("sha256"),
+        "source_scope": (
+            "execution"
+            if source.get("execution_sha256") is not None
+            else "full_maintained_tree_legacy"
+        ),
     }
 
 
@@ -104,7 +110,9 @@ def _validate_controlled_pair(
         and candidate["source_sha256"] is not None
         and baseline["source_sha256"] != candidate["source_sha256"]
     ):
-        raise ValueError("Experiments were produced from different maintained source trees")
+        raise ValueError(
+            "Experiments were produced from different maintained execution sources"
+        )
 
 
 def _load_aggregates(
@@ -227,11 +235,14 @@ def build_comparison_rows(
                     paired = summarize_values(differences)
                     from scipy.stats import ttest_1samp
 
-                    if np.allclose(differences, differences[0]):
+                    difference_array = np.asarray(differences, dtype=np.float64)
+                    scale = max(1.0, float(np.max(np.abs(difference_array))))
+                    constant_tolerance = 8.0 * np.finfo(np.float64).eps * scale
+                    if float(np.ptp(difference_array)) <= constant_tolerance:
                         p_value = 0.0 if differences[0] != 0.0 else 1.0
                     else:
                         p_value = float(
-                            ttest_1samp(differences, popmean=0.0).pvalue
+                            ttest_1samp(difference_array, popmean=0.0).pvalue
                         )
                     comparison.update(
                         {
@@ -393,11 +404,17 @@ def compare_experiments(
             "baseline_manifest": {
                 "config_sha256": baseline_manifest.get("config", {}).get("sha256"),
                 "source_sha256": baseline_manifest.get("source", {}).get("sha256"),
+                "execution_source_sha256": baseline_manifest.get("source", {}).get(
+                    "execution_sha256"
+                ),
                 "input_delta": baseline_manifest.get("parameters", {}).get("input_delta"),
             },
             "candidate_manifest": {
                 "config_sha256": candidate_manifest.get("config", {}).get("sha256"),
                 "source_sha256": candidate_manifest.get("source", {}).get("sha256"),
+                "execution_source_sha256": candidate_manifest.get("source", {}).get(
+                    "execution_sha256"
+                ),
                 "input_delta": candidate_manifest.get("parameters", {}).get("input_delta"),
             },
             "controlled_manifest_view": _controlled_manifest_view(baseline_manifest),

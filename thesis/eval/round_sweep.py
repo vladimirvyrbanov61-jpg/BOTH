@@ -45,6 +45,7 @@ CSV_FIELDS = [
     "auc_advantage",
     "accuracy_null_p_value",
     "accuracy_null_log10_p_value",
+    "accuracy_null_test",
     "youden_j",
 ]
 

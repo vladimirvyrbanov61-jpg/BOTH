@@ -56,6 +56,7 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
     assert -1.0 <= row["advantage_edge"] <= 1.0
     assert 0.0 <= row["accuracy_null_p_value"] <= 1.0
     assert row["accuracy_null_log10_p_value"] <= 0.0
+    assert row["accuracy_null_test"] == "conditional_hypergeometric_fixed_margins_v1"
     assert row["input_delta_left"] == 1
     assert row["input_delta_right"] == 0
     assert results_path.exists()
@@ -78,6 +79,10 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
     assert aggregate_rows[0]["input_delta_left"] == "1"
     assert aggregate_rows[0]["input_delta_right"] == "0"
     assert float(aggregate_rows[0]["accuracy_null_log10_p_value_fisher"]) <= 0.0
+    assert (
+        aggregate_rows[0]["accuracy_null_test"]
+        == "conditional_hypergeometric_fixed_margins_v1"
+    )
     assert float(aggregate_rows[0]["accuracy_std"]) == 0.0
     assert (results_path / "simon_accuracy.png").exists()
 
@@ -97,7 +102,7 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
     assert all(len(artifact["sha256"]) == 64 for artifact in external)
     with open(results_path / "manifest.json", encoding="utf-8") as f:
         manifest = json.load(f)
-    assert manifest["schema_version"] == 5
+    assert manifest["schema_version"] == 6
     assert manifest["training_completed_at"]
     assert manifest["completed_at"]
     assert manifest["environment"]["torch"][

@@ -32,7 +32,8 @@ def main():
             print(f"[classical] Deleted old {cipher} bounds", flush=True)
         
         # Get sampling parameters
-        n_samples = config.get("classical", {}).get("n_samples_simon", 250000) if cipher == "simon" else config.get("classical", {}).get("n_samples_speck", 1000000)
+        classical = config["classical"]
+        n_samples = int(classical[f"n_samples_{cipher}"])
         print(f"[classical] Using n_samples={n_samples} for {cipher}", flush=True)
         
         # Compute

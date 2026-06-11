@@ -21,9 +21,10 @@ and classical differential-characteristic comparison.
   CUDA execution are seeded. Strict deterministic Torch algorithms are enabled.
 - Accuracy thresholds are selected on validation data; final metrics use the
   held-out test split.
-- Signed accuracy/AUC edges replace absolute deviations. Exact per-seed null
-  p-values are retained in log10 form and combined across seeds with a
-  log-domain Fisher calculation, avoiding floating-point underflow warnings.
+- Signed accuracy/AUC edges replace absolute deviations. Exact per-seed
+  random-label p-values condition on fixed class and prediction counts, are
+  retained in log10 form, and are combined across seeds with a log-domain
+  Fisher calculation, avoiding floating-point underflow warnings.
 - Aggregate plots report 95% Student-t intervals across distinct seeds.
 - Aggregation rejects incomplete per-seed metric records, invalid sample
   counts, and duplicate seeds instead of reporting mismatched uncertainty.
@@ -37,8 +38,9 @@ and classical differential-characteristic comparison.
 - SIMON one-round transitions use an exact nonlinear-function DDT. SPECK rows
   use repeated Monte Carlo sampling. Multi-round tracking for both ciphers is
   top-k beam search and is explicitly an estimate, not a formal bound.
-- Manifests record source/configuration/environment provenance and hashes for
-  exact caches, checkpoints, TensorBoard events, and result artifacts.
+- Manifests record full-tree and execution-only source hashes plus
+  configuration/environment provenance and hashes for exact caches,
+  checkpoints, TensorBoard events, and result artifacts.
 - Later plot or comparison regeneration records its own command, source hash,
   and Git state separately from the source used for model training.
 - Checkpoint loading uses safe tensor-only deserialization and validates the
@@ -63,4 +65,4 @@ Timestamped `results/` directories are local-only and ignored by Git. Results
 selected for publication should be distributed as versioned release or
 institutional-archive assets with their manifests. Historical code under
 `Archive/` is excluded from package and test discovery and is not part of the
-schema-5 pipeline.
+schema-6 pipeline.

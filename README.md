@@ -58,12 +58,13 @@ The supported distinguisher is a 1D CNN:
 
 The headline accuracy statistic is the signed edge `2 * (accuracy - 0.5)`.
 Unlike `abs(accuracy - 0.5)`, its expectation under random guessing is zero.
-Every seed row also reports an exact two-sided binomial null p-value. Across
-seeds these p-values are combined with Fisher's method; they are not averaged.
-Log10 p-values are retained and combined in log space so extremely strong
-results do not lose magnitude when an ordinary floating-point p-value
-underflows to zero. A small positive absolute deviation alone is not evidence
-of a distinguisher.
+Every seed row also reports an exact two-sided random-label p-value conditional
+on the fixed class balance and on how many positive predictions the trained
+classifier produced. Across seeds these p-values are combined with Fisher's
+method; they are not averaged. Log10 p-values are retained and combined in log
+space so extremely strong results do not lose magnitude when an ordinary
+floating-point p-value underflows to zero. A small positive absolute deviation
+alone is not evidence of a distinguisher.
 
 ## Classical Comparison
 
@@ -89,6 +90,13 @@ count, top-k setting, seed, repetition count, and schema all match.
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements-thesis.txt
+```
+
+To reproduce the exact tested Windows/Python 3.13 environment instead of
+resolving compatible current versions:
+
+```powershell
+python -m pip install -r requirements-lock.txt
 ```
 
 Editable package installation is also supported:
@@ -156,6 +164,8 @@ To compare an already completed timestamped run without retraining:
 python -m thesis.run_thesis --profile full --skip-sweep --results-dir results/thesis/run_YYYYMMDD_HHMMSS_microseconds
 ```
 
-Runs created before the schema-5 hardening pass can still be inspected, but
-their dirty-worktree provenance and original absolute-advantage metric mean
-they should not be represented as fresh outputs of the current implementation.
+Runs created before schema 6 can still be inspected, but they do not carry the
+current conditional null-test label and execution-only source hash. Runs from
+before the earlier schema-5 hardening pass additionally used weaker provenance
+and, in some cases, the original absolute-advantage metric. Historical runs
+must not be represented as fresh outputs of the current implementation.

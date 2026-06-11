@@ -15,6 +15,8 @@ from typing import Any
 
 _SOURCE_SUFFIXES = {".py", ".yaml", ".yml", ".md", ".txt", ".toml"}
 _SOURCE_ROOTS = {"ciphers", "scripts", "Simon", "Speck", "tests", "thesis"}
+_EXECUTION_SOURCE_SUFFIXES = {".py", ".yaml", ".yml"}
+_EXECUTION_SOURCE_ROOTS = {"ciphers", "scripts", "Simon", "Speck", "thesis"}
 _ROOT_SOURCE_FILES = {
     "README.md",
     "PROJECT_REVIEW_CURRENT.md",
@@ -24,6 +26,7 @@ _ROOT_SOURCE_FILES = {
     "pyproject.toml",
     ".github/workflows/tests.yml",
 }
+MANIFEST_SCHEMA_VERSION = 6
 
 
 def utc_now() -> str:
@@ -69,6 +72,30 @@ def source_tree_digest(repo_root: Path) -> str:
         path = repo_root / name
         if path.exists():
             paths.append(path)
+    for path in sorted(set(paths)):
+        relative = path.relative_to(repo_root).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(file_digest(path).encode("ascii"))
+    return digest.hexdigest()
+
+
+def execution_source_digest(repo_root: Path) -> str:
+    """Hash runtime code and experiment configs, excluding tests and prose."""
+    digest = hashlib.sha256()
+    paths: list[Path] = []
+    for root_name in sorted(_EXECUTION_SOURCE_ROOTS):
+        root = repo_root / root_name
+        if not root.exists():
+            continue
+        paths.extend(
+            path
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.suffix.lower() in _EXECUTION_SOURCE_SUFFIXES
+            and "__pycache__" not in path.parts
+            and not path.name.startswith("test_")
+        )
     for path in sorted(set(paths)):
         relative = path.relative_to(repo_root).as_posix().encode("utf-8")
         digest.update(len(relative).to_bytes(4, "big"))
@@ -144,7 +171,7 @@ def build_manifest(
 ) -> dict[str, Any]:
     created_at = utc_now()
     return {
-        "schema_version": 5,
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "run_type": run_type,
         "status": "running",
         "created_at": created_at,
@@ -161,6 +188,8 @@ def build_manifest(
                 "README, requirements, and pyproject"
             ),
             "sha256": source_tree_digest(repo_root),
+            "execution_scope": "runtime Python modules and experiment YAML configs",
+            "execution_sha256": execution_source_digest(repo_root),
         },
         "environment": {
             "python": sys.version,
@@ -185,8 +214,8 @@ def build_manifest(
                 "the mathematical range of bounded metrics"
             ),
             "null_significance": (
-                "exact per-seed binomial p-values retained in log10 form and "
-                "combined with Fisher's method in log space"
+                "exact per-seed conditional random-label p-values retained in "
+                "log10 form and combined with Fisher's method in log space"
             ),
         },
         "paths": {key: str(value) if value is not None else None for key, value in paths.items()},
@@ -263,21 +292,26 @@ def load_artifact_index(path: Path) -> list[dict[str, Any]]:
 
 
 def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
-    manifest["schema_version"] = 5
+    manifest["schema_version"] = MANIFEST_SCHEMA_VERSION
     statistics = manifest.setdefault("statistics", {})
-    statistics.update(
-        {
-            "grouping": ["cipher", "rounds", "split"],
-            "dispersion": "sample standard deviation (ddof=1; zero for one seed)",
-            "error_bars": (
-                "95% Student-t confidence interval across seeds; clipped to "
-                "the mathematical range of bounded metrics"
-            ),
-            "null_significance": (
-                "exact per-seed binomial p-values retained in log10 form and "
-                "combined with Fisher's method in log space"
-            ),
-        }
+    statistics.setdefault("grouping", ["cipher", "rounds", "split"])
+    statistics.setdefault(
+        "dispersion",
+        "sample standard deviation (ddof=1; zero for one seed)",
+    )
+    statistics.setdefault(
+        "error_bars",
+        (
+            "95% Student-t confidence interval across seeds; clipped to "
+            "the mathematical range of bounded metrics"
+        ),
+    )
+    statistics.setdefault(
+        "null_significance",
+        (
+            "method is recorded per raw and aggregate CSV row; per-seed log10 "
+            "p-values are combined with Fisher's method in log space"
+        ),
     )
     manifest["updated_at"] = utc_now()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -303,5 +337,6 @@ def record_postprocessing(
     }
     if repo_root is not None:
         record["source_sha256"] = source_tree_digest(repo_root)
+        record["execution_source_sha256"] = execution_source_digest(repo_root)
         record["git"] = _git_metadata(repo_root)
     manifest.setdefault("postprocessing", []).append(record)

@@ -11,7 +11,7 @@ import numpy as np
 
 from ciphers.registry import CipherName
 
-DATASET_SCHEMA_VERSION = 2
+DATASET_SCHEMA_VERSION = 3
 
 
 def config_fingerprint(
@@ -36,7 +36,7 @@ def config_fingerprint(
         "feature": "concat_bits_64",
         "schema_version": DATASET_SCHEMA_VERSION,
     }
-    return hashlib.md5(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
+    return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:20]
 
 
 def cache_path(

@@ -52,6 +52,7 @@ def test_aggregate_rows_reports_sample_uncertainty() -> None:
     assert row["accuracy_null_log10_p_value_fisher"] == pytest.approx(
         -2.990959780027964
     )
+    assert row["accuracy_null_test"] == "legacy_unlabeled_v1"
     assert "accuracy_null_p_value_mean" not in row
 
 
@@ -129,4 +130,29 @@ def test_aggregate_rejects_mixed_input_differences() -> None:
         {**base, "seed": 2, "input_delta_left": 0x40},
     ]
     with pytest.raises(ValueError, match="Inconsistent input differences"):
+        aggregate_rows(rows)
+
+
+def test_aggregate_rejects_mixed_null_test_methods() -> None:
+    base = {
+        "cipher": "simon",
+        "rounds": 3,
+        "split": "test",
+        "n_samples": 100,
+        "accuracy": 0.5,
+        "auc_roc": 0.5,
+        "tpr": 0.5,
+        "tnr": 0.5,
+        "accuracy_advantage": 0.0,
+        "advantage_edge": 0.0,
+        "auc_advantage": 0.0,
+        "accuracy_null_p_value": 1.0,
+        "youden_j": 0.0,
+    }
+    rows = [
+        {**base, "seed": 1, "accuracy_null_test": "method_a"},
+        {**base, "seed": 2, "accuracy_null_test": "method_b"},
+    ]
+
+    with pytest.raises(ValueError, match="Inconsistent null-significance"):
         aggregate_rows(rows)

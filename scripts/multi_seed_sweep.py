@@ -25,6 +25,47 @@ from thesis.eval.manifest import (
 )
 from thesis.eval.plot_results import plot_all
 
+
+def _prepare_new_results_dir(path: Path) -> None:
+    """Create an empty run directory without mixing independent experiments."""
+    if path.exists():
+        if not path.is_dir():
+            raise FileExistsError(f"results path is not a directory: {path}")
+        if any(path.iterdir()):
+            raise FileExistsError(
+                f"results directory is not empty: {path}. "
+                "Choose a new directory; completed and partial runs are immutable."
+            )
+        return
+    path.mkdir(parents=True)
+
+
+def _record_subprocess_exception(
+    manifest_path: Path,
+    manifest: dict,
+    results_dir: Path,
+    *,
+    stage: str,
+    exc: BaseException,
+    seed: int | None = None,
+) -> None:
+    interrupted = isinstance(exc, KeyboardInterrupt)
+    manifest["status"] = "interrupted" if interrupted else "failed"
+    failure = {
+        "stage": stage,
+        "error_type": type(exc).__name__,
+        "reason": str(exc) or type(exc).__name__,
+    }
+    if seed is not None:
+        failure["seed"] = seed
+        if not interrupted:
+            manifest["progress"]["failed_seeds"].append(seed)
+    manifest["failure"] = failure
+    manifest["completed_at"] = utc_now()
+    manifest["artifacts"] = artifact_inventory(results_dir)
+    write_manifest(manifest_path, manifest)
+
+
 def run_seed_sweep(
     seeds: list[int],
     profile: str = "full",
@@ -77,7 +118,7 @@ def run_seed_sweep(
         if not configured_results.is_absolute():
             configured_results = _REPO_ROOT / configured_results
         results_dir = configured_results / f"run_{datetime.now():%Y%m%d_%H%M%S_%f}"
-    results_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_new_results_dir(results_dir)
     cipher_names = ciphers or resolved_config.get("ciphers") or ["simon", "speck"]
     manifest_path = results_dir / "manifest.json"
     manifest = build_manifest(
@@ -112,7 +153,17 @@ def run_seed_sweep(
     if not skip_tests:
         test_cmd = [sys.executable, "-m", "pytest"]
         print(f"[TEST GATE] {' '.join(test_cmd)}")
-        ret = subprocess.call(test_cmd, cwd=str(_REPO_ROOT))
+        try:
+            ret = subprocess.call(test_cmd, cwd=str(_REPO_ROOT))
+        except BaseException as exc:
+            _record_subprocess_exception(
+                manifest_path,
+                manifest,
+                results_dir,
+                stage="test_gate",
+                exc=exc,
+            )
+            raise
         if ret != 0:
             manifest["status"] = "failed"
             manifest["failure"] = {"stage": "test_gate", "return_code": ret}
@@ -157,7 +208,18 @@ def run_seed_sweep(
         print(f"[SEED {seed}] Command: {' '.join(cmd)}\n")
 
         # Run
-        ret = subprocess.call(cmd, cwd=str(_REPO_ROOT))
+        try:
+            ret = subprocess.call(cmd, cwd=str(_REPO_ROOT))
+        except BaseException as exc:
+            _record_subprocess_exception(
+                manifest_path,
+                manifest,
+                results_dir,
+                stage="round_sweep",
+                exc=exc,
+                seed=seed,
+            )
+            raise
         if ret != 0:
             manifest["status"] = "failed"
             manifest["progress"]["failed_seeds"].append(seed)

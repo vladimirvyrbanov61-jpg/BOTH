@@ -78,6 +78,7 @@ AGGREGATE_FIELDS = [
     "n_seeds",
     "seeds",
     "n_samples_total",
+    "accuracy_null_test",
     "accuracy_null_p_value_fisher",
     "accuracy_null_log10_p_value_fisher",
     *[
@@ -111,12 +112,17 @@ def read_metric_rows(path: Path) -> list[dict[str, str]]:
                 row["accuracy_null_p_value"] = str(
                     accuracy_null_p_value(correct, n_samples)
                 )
+                row["accuracy_null_test"] = "legacy_binomial_from_accuracy_v1"
             if row.get("accuracy_null_log10_p_value") in (None, ""):
                 n_samples = int(row["n_samples"])
                 correct = int(round(accuracy * n_samples))
                 row["accuracy_null_log10_p_value"] = str(
                     accuracy_null_log10_p_value(correct, n_samples)
                 )
+                row["accuracy_null_test"] = "legacy_binomial_from_accuracy_v1"
+            row.setdefault("accuracy_null_test", "legacy_unlabeled_v1")
+            if not row["accuracy_null_test"]:
+                row["accuracy_null_test"] = "legacy_unlabeled_v1"
         if row.get("auc_roc") not in (None, ""):
             auc = float(row["auc_roc"])
             row["auc_advantage"] = row.get("auc_advantage") or str(
@@ -252,6 +258,15 @@ def aggregate_rows(
             "seeds": ";".join(str(seed) for seed in seeds),
             "n_samples_total": sum(int(row["n_samples"]) for row in group),
         }
+        null_tests = {
+            str(row.get("accuracy_null_test") or "legacy_unlabeled_v1")
+            for row in group
+        }
+        if len(null_tests) != 1:
+            raise ValueError(
+                f"Inconsistent null-significance methods for {cipher} round {rounds}"
+            )
+        aggregate["accuracy_null_test"] = next(iter(null_tests))
         delta_values = {
             (int(row["input_delta_left"]), int(row["input_delta_right"]))
             for row in group

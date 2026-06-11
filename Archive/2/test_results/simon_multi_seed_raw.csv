@@ -1,2 +1,0 @@
-seed,cipher,rounds,split,n_samples,accuracy,auc_roc,tpr,tnr,advantage
-42,simon,3,test,30,0.5,0.8133333333333334,1.0,0.0,0.0

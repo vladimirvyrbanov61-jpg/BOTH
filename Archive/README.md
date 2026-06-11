@@ -17,3 +17,8 @@ must not be combined with or compared numerically against outputs from
 `thesis/`.
 
 Only commands documented in the root `README.md` are supported.
+
+Numbered experiment snapshots are intentionally local-only and ignored by Git.
+They contain generated results and terminal transcripts, not maintained source.
+Published thesis evidence must come from a timestamped current-pipeline run with
+its manifest and artifact hashes.

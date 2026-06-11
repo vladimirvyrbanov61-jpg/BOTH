@@ -17,6 +17,21 @@ PROFILE_FILES: dict[ProfileName, str] = {
 }
 
 _CIPHER_MAX_ROUNDS = {"simon": 32, "speck": 22}
+_TOP_LEVEL_KEYS = {
+    "cipher",
+    "ciphers",
+    "input_delta",
+    "n_samples_per_round",
+    "train_ratio",
+    "val_ratio",
+    "rounds",
+    "seed",
+    "data_dir",
+    "model_dir",
+    "results_dir",
+    "training",
+    "classical",
+}
 _TRAINING_KEYS = {
     "epochs",
     "batch_size",
@@ -25,6 +40,12 @@ _TRAINING_KEYS = {
     "patience",
     "device",
     "channels",
+}
+_CLASSICAL_KEYS = {
+    "n_samples_simon",
+    "n_samples_speck",
+    "top_k_dp",
+    "monte_carlo_repetitions",
 }
 
 
@@ -56,6 +77,9 @@ def _number(value: Any, name: str, *, minimum: float = 0.0) -> float:
 def validate_config(data: dict[str, Any], *, source: Path | str = "<config>") -> None:
     """Validate the complete thesis experiment configuration before execution."""
     label = str(source)
+    unknown_top_level = sorted(set(data) - _TOP_LEVEL_KEYS)
+    if unknown_top_level:
+        raise ValueError(f"{label}: unknown configuration options {unknown_top_level}")
 
     ciphers = data.get("ciphers")
     if not isinstance(ciphers, list) or not ciphers:
@@ -144,6 +168,9 @@ def validate_config(data: dict[str, Any], *, source: Path | str = "<config>") ->
             _integer(channel, f"{label}: training.channels[{index}]", minimum=1)
 
     classical = _mapping(data.get("classical"), f"{label}: classical")
+    unknown_classical = sorted(set(classical) - _CLASSICAL_KEYS)
+    if unknown_classical:
+        raise ValueError(f"{label}: unknown classical options {unknown_classical}")
     _integer(
         classical.get("n_samples_simon"),
         f"{label}: classical.n_samples_simon",
