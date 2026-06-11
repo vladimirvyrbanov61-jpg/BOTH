@@ -1,6 +1,6 @@
 # Audit Implementation Status
 
-Date: 2026-06-10
+Date: 2026-06-11
 
 The current schema-5 maintained pipeline implements the corrective audit plan.
 
@@ -40,8 +40,11 @@ The current schema-5 maintained pipeline implements the corrective audit plan.
 - CI, `pyproject.toml`, dependency constraints, and artifact ignore rules exist.
 - Generated-directory ignore rules are root-anchored so they do not hide
   maintained source packages such as `thesis/models`.
-- Generated caches, checkpoints, TensorBoard events, and IDE state have been
-  removed from current Git tracking while remaining available locally.
+- Generated caches, checkpoints, TensorBoard events, timestamped results, and
+  IDE state are excluded from Git while remaining available locally.
+- Historical code is isolated under `Archive/`, excluded from package and test
+  discovery, and explicitly documented as methodologically incomparable with
+  the maintained thesis pipeline.
 
 ## Experiment Compatibility
 
@@ -61,7 +64,7 @@ historical evidence and should not be described as schema-5 experiments.
 - SIMON characteristic tracking also uses top-k beam pruning after exact
   one-round transition construction, so its multi-round result is an estimate.
 - Neural signed edge and classical characteristic probability are different
-  quantities and remain plotted on separate axes.
+  quantities and remain plotted in separate panels.
 - The two selected input differences do not establish generalization to all
   differences.
 

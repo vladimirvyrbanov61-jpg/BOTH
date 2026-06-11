@@ -6,7 +6,7 @@ The historical migration is complete. The supported execution path is:
 `thesis/models` -> `thesis/eval` -> `thesis/classical`.
 
 Legacy fault-injection, autoencoder, recovery, and duplicate experiment code is
-stored under `Archieve/LegacyPipelines/` and is not imported by the maintained
+stored under `Archive/LegacyPipelines/` and is not imported by the maintained
 pipeline.
 
 ## Current Outputs

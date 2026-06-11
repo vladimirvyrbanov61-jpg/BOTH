@@ -59,6 +59,8 @@ SIMON/SPECK primitive suites. GitHub CI uses the same discovery-based gate, so
 new maintained tests cannot be omitted from a hard-coded list. CI covers
 Python 3.10, 3.12, and 3.13, including the declared minimum version. Generated
 caches, models, logs, and IDE state remain local and outside version control.
-Historical result snapshots already committed under `results/` are retained
-as legacy evidence and are not treated as outputs of the current schema-5
-pipeline.
+Timestamped `results/` directories are local-only and ignored by Git. Results
+selected for publication should be distributed as versioned release or
+institutional-archive assets with their manifests. Historical code under
+`Archive/` is excluded from package and test discovery and is not part of the
+schema-5 pipeline.

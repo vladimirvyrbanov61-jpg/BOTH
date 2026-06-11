@@ -28,7 +28,7 @@ both-multi-seed = "scripts.multi_seed_sweep:main"
 
 [tool.setuptools.packages.find]
 include = ["ciphers*", "scripts*", "Simon*", "Speck*", "thesis*"]
-exclude = ["Archieve*", "tests*"]
+exclude = ["Archive*", "tests*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "Simon", "Speck"]

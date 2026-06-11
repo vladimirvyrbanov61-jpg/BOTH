@@ -15,8 +15,11 @@ The supported implementation is:
 - `scripts/multi_seed_sweep.py`: ten-seed experiment orchestrator.
 - `tests/`: the test gate executed before a normal sweep.
 
-Historical experiments and superseded scripts are stored under `Archieve/`.
+Historical experiments and superseded scripts are stored under `Archive/`.
 They are not supported runtime code and must not be cited as the thesis model.
+The archive is excluded from package discovery and test discovery. Its legacy
+round ranges, datasets, metrics, and figures are not comparable to outputs of
+the maintained thesis pipeline.
 
 ## Dataset Definition
 
@@ -134,11 +137,18 @@ sources.
 
 ## Artifact Policy
 
-Dataset caches, model checkpoints, and TensorBoard events are regenerable local
-artifacts and are excluded from Git. Publication CSVs, figures, and manifests
-may be retained under `results/`. Manifests preserve the training completion
-time separately from later post-processing, hash the maintained source tree,
-and index exact dataset caches, checkpoints, and TensorBoard event files.
+Dataset caches, model checkpoints, TensorBoard events, and all timestamped
+`results/` directories are regenerable local artifacts and are excluded from
+Git. Results intended for reviewers should be attached to a versioned GitHub
+Release or an institutional archive together with the manifest, rather than
+committed to the source tree. Manifests preserve the training completion time
+separately from later post-processing, hash the maintained source tree, and
+index exact dataset caches, checkpoints, and TensorBoard event files.
+
+Source-control commits should use descriptive messages that identify the
+scientific or engineering change. Published history should not be rewritten
+merely to rename an earlier weak commit message; follow-up corrections should
+be recorded in a new, meaningful commit.
 
 To compare an already completed timestamped run without retraining:
 

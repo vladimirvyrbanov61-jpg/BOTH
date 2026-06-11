@@ -2,25 +2,36 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Local Python environments
 .venv/
 venv/
 *.egg-info/
+build/
+dist/
 
 # IDE and editor state
 .idea/
 .vscode/
-state.vscdb
+*.vscdb
+.DS_Store
+Thumbs.db
+Desktop.ini
 
 # Regenerable experiment artifacts
 /thesis/data/cache/
 /models/
 /runs/
+/results/
 *.pt
 *.pth
 *.npz
+*.log
 events.out.tfevents.*
 
 # Local historical/generated backups retained outside version control
-Archieve/backup_*/
+Archive/backup_*/
