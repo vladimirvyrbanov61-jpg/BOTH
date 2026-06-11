@@ -22,12 +22,16 @@ and classical differential-characteristic comparison.
 - Accuracy thresholds are selected on validation data; final metrics use the
   held-out test split.
 - Signed accuracy/AUC edges replace absolute deviations. Exact per-seed null
-  p-values are combined across seeds with Fisher's method.
+  p-values are retained in log10 form and combined across seeds with a
+  log-domain Fisher calculation, avoiding floating-point underflow warnings.
 - Aggregate plots report 95% Student-t intervals across distinct seeds.
 - Aggregation rejects incomplete per-seed metric records, invalid sample
   counts, and duplicate seeds instead of reporting mismatched uncertainty.
 - Neural/classical comparison requires complete neural coverage for every
   configured round before it produces plots.
+- Neural, aggregate, and classical figures identify the configured plaintext
+  difference. Neural/classical trends use separate panels because their
+  quantities are not directly comparable in magnitude.
 - Input-difference comparisons are paired by seed and use Holm-adjusted
   multiple-testing p-values.
 - SIMON one-round transitions use an exact nonlinear-function DDT. SPECK rows
@@ -35,6 +39,8 @@ and classical differential-characteristic comparison.
   top-k beam search and is explicitly an estimate, not a formal bound.
 - Manifests record source/configuration/environment provenance and hashes for
   exact caches, checkpoints, TensorBoard events, and result artifacts.
+- Later plot or comparison regeneration records its own command, source hash,
+  and Git state separately from the source used for model training.
 - Checkpoint loading uses safe tensor-only deserialization and validates the
   checkpoint schema, CNN channels, and decision threshold before inference.
 

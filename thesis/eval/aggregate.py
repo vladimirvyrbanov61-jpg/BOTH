@@ -9,7 +9,10 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from thesis.eval.metrics import accuracy_null_p_value
+from thesis.eval.metrics import (
+    accuracy_null_log10_p_value,
+    accuracy_null_p_value,
+)
 
 METRICS = (
     "accuracy",
@@ -70,10 +73,13 @@ AGGREGATE_FIELDS = [
     "cipher",
     "rounds",
     "split",
+    "input_delta_left",
+    "input_delta_right",
     "n_seeds",
     "seeds",
     "n_samples_total",
     "accuracy_null_p_value_fisher",
+    "accuracy_null_log10_p_value_fisher",
     *[
         f"{metric}_{suffix}"
         for metric in METRICS
@@ -105,12 +111,54 @@ def read_metric_rows(path: Path) -> list[dict[str, str]]:
                 row["accuracy_null_p_value"] = str(
                     accuracy_null_p_value(correct, n_samples)
                 )
+            if row.get("accuracy_null_log10_p_value") in (None, ""):
+                n_samples = int(row["n_samples"])
+                correct = int(round(accuracy * n_samples))
+                row["accuracy_null_log10_p_value"] = str(
+                    accuracy_null_log10_p_value(correct, n_samples)
+                )
         if row.get("auc_roc") not in (None, ""):
             auc = float(row["auc_roc"])
             row["auc_advantage"] = row.get("auc_advantage") or str(
                 2.0 * (auc - 0.5)
             )
     return rows
+
+
+def _manifest_input_delta(raw_path: Path) -> tuple[int, int] | None:
+    manifest_path = raw_path.parent / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    import json
+
+    with open(manifest_path, encoding="utf-8") as handle:
+        delta = json.load(handle).get("parameters", {}).get("input_delta")
+    if (
+        not isinstance(delta, list)
+        or len(delta) != 2
+        or any(isinstance(word, bool) or not isinstance(word, int) for word in delta)
+    ):
+        return None
+    return int(delta[0]), int(delta[1])
+
+
+def fisher_combined_log10_p_value(log10_p_values: list[float]) -> float:
+    """Combine p-values with Fisher's method without taking log(0)."""
+    values = np.asarray(log10_p_values, dtype=np.float64)
+    if values.size == 0:
+        raise ValueError("cannot combine an empty p-value sample")
+    if not np.isfinite(values).all() or (values > 0.0).any():
+        raise ValueError("log10 p-values must be finite and non-positive")
+    z = float(-np.log(10.0) * values.sum())
+    if z == 0.0:
+        return 0.0
+    from scipy.special import gammaln, logsumexp
+
+    indices = np.arange(values.size, dtype=np.float64)
+    log_survival = -z + float(
+        logsumexp(indices * np.log(z) - gammaln(indices + 1.0))
+    )
+    return min(0.0, log_survival / np.log(10.0))
 
 
 def student_t_critical_95(n_samples: int) -> float:
@@ -204,6 +252,25 @@ def aggregate_rows(
             "seeds": ";".join(str(seed) for seed in seeds),
             "n_samples_total": sum(int(row["n_samples"]) for row in group),
         }
+        delta_values = {
+            (int(row["input_delta_left"]), int(row["input_delta_right"]))
+            for row in group
+            if row.get("input_delta_left") not in (None, "")
+            and row.get("input_delta_right") not in (None, "")
+        }
+        rows_with_delta = sum(
+            row.get("input_delta_left") not in (None, "")
+            or row.get("input_delta_right") not in (None, "")
+            for row in group
+        )
+        if rows_with_delta not in (0, len(group)) or len(delta_values) > 1:
+            raise ValueError(
+                f"Inconsistent input differences for {cipher} round {rounds}"
+            )
+        if delta_values:
+            delta_left, delta_right = next(iter(delta_values))
+            aggregate["input_delta_left"] = delta_left
+            aggregate["input_delta_right"] = delta_right
         for metric in METRICS:
             values = [float(row[metric]) for row in group]
             for suffix, value in summarize_values(
@@ -222,10 +289,24 @@ def aggregate_rows(
             raise ValueError(
                 f"Invalid null p-value for {cipher} round {rounds}"
             )
-        from scipy.stats import combine_pvalues
-
+        log10_p_values = []
+        for row, p_value in zip(group, p_values):
+            if row.get("accuracy_null_log10_p_value") not in (None, ""):
+                log10_p_values.append(
+                    float(row["accuracy_null_log10_p_value"])
+                )
+            elif p_value > 0.0:
+                log10_p_values.append(float(np.log10(p_value)))
+            else:
+                n_samples = int(row["n_samples"])
+                correct = int(round(float(row["accuracy"]) * n_samples))
+                log10_p_values.append(
+                    accuracy_null_log10_p_value(correct, n_samples)
+                )
+        combined_log10_p = fisher_combined_log10_p_value(log10_p_values)
+        aggregate["accuracy_null_log10_p_value_fisher"] = combined_log10_p
         aggregate["accuracy_null_p_value_fisher"] = float(
-            combine_pvalues(p_values, method="fisher").pvalue
+            10.0**combined_log10_p
         )
         output.append(aggregate)
     return output
@@ -249,7 +330,15 @@ def write_aggregate_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def aggregate_csv(raw_path: Path, output_path: Path | None = None) -> tuple[list[dict[str, Any]], Path]:
-    rows = aggregate_rows(read_metric_rows(raw_path))
+    metric_rows = read_metric_rows(raw_path)
+    delta = _manifest_input_delta(raw_path)
+    if delta is not None:
+        for row in metric_rows:
+            if row.get("input_delta_left") in (None, ""):
+                row["input_delta_left"] = str(delta[0])
+            if row.get("input_delta_right") in (None, ""):
+                row["input_delta_right"] = str(delta[1])
+    rows = aggregate_rows(metric_rows)
     target = output_path or raw_path.with_name(raw_path.name.replace("_multi_seed_raw", "_aggregate"))
     write_aggregate_csv(target, rows)
     return rows, target

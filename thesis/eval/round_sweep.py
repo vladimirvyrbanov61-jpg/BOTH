@@ -34,6 +34,8 @@ CSV_FIELDS = [
     "rounds",
     "split",
     "n_samples",
+    "input_delta_left",
+    "input_delta_right",
     "accuracy",
     "auc_roc",
     "tpr",
@@ -42,6 +44,7 @@ CSV_FIELDS = [
     "advantage_edge",
     "auc_advantage",
     "accuracy_null_p_value",
+    "accuracy_null_log10_p_value",
     "youden_j",
 ]
 
@@ -244,6 +247,7 @@ def _run_round_sweep_impl(
                 n_samples=len(y_te),
                 metrics=test_m,
                 seed=seed,
+                input_delta=delta,
             )
             _append_csv_row(csv_path, row)
             _append_csv_row(round_csv_path, row)
@@ -276,7 +280,7 @@ def _run_round_sweep_impl(
                 f"[sweep] seed={seed} {cipher} R={rounds} — "
                 f"acc={test_m['accuracy']:.4f} auc={test_m['auc_roc']:.4f} "
                 f"edge={test_m['advantage_edge']:.4f} "
-                f"p_null={test_m['accuracy_null_p_value']:.3g}"
+                f"log10_p_null={test_m['accuracy_null_log10_p_value']:.2f}"
             )
 
     if manifest is not None and manifest_path is not None:

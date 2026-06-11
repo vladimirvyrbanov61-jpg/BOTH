@@ -49,11 +49,20 @@ def plot_multi_seed_for_cipher(cipher: str, results_dir: Path) -> list[Path]:
 
     outputs: list[Path] = [aggregate_path]
     rounds = [int(row["rounds"]) for row in rows]
+    delta_label = ""
+    if rows[0].get("input_delta_left") not in (None, ""):
+        delta_label = (
+            f", Delta_P=(0x{int(rows[0]['input_delta_left']):04x}, "
+            f"0x{int(rows[0]['input_delta_right']):04x})"
+        )
     for metric in METRICS:
         means = [float(row[f"{metric}_mean"]) for row in rows]
         lower = [float(row[f"{metric}_ci95_low"]) for row in rows]
         upper = [float(row[f"{metric}_ci95_high"]) for row in rows]
-        title = f"{cipher.upper()}32/64 - {metric} (mean with 95% CI across seeds)"
+        title = (
+            f"{cipher.upper()}32/64 - {metric}\n"
+            f"Mean with 95% CI across seeds{delta_label}"
+        )
         out_path = results_dir / f"{cipher}_{metric}.png"
         plot_metric_rounds(rounds, means, lower, upper, title, out_path, ylabel=metric)
         outputs.append(out_path)

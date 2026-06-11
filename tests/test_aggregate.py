@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
-from thesis.eval.aggregate import aggregate_rows, student_t_critical_95
+from thesis.eval.aggregate import (
+    aggregate_rows,
+    fisher_combined_log10_p_value,
+    student_t_critical_95,
+)
 
 
 def test_aggregate_rows_reports_sample_uncertainty() -> None:
@@ -42,6 +48,9 @@ def test_aggregate_rows_reports_sample_uncertainty() -> None:
     assert row["accuracy_ci95_high"] == 1.0
     assert row["accuracy_null_p_value_fisher"] == pytest.approx(
         0.0010210340371976192
+    )
+    assert row["accuracy_null_log10_p_value_fisher"] == pytest.approx(
+        -2.990959780027964
     )
     assert "accuracy_null_p_value_mean" not in row
 
@@ -89,3 +98,35 @@ def test_aggregate_rejects_partial_seed_metric_rows() -> None:
     }
     with pytest.raises(ValueError, match="Missing metrics.*youden_j"):
         aggregate_rows([row])
+
+
+def test_fisher_combination_handles_underflowed_p_values_without_warning() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        combined = fisher_combined_log10_p_value([-4_483.0, -4_255.0])
+    assert combined < -8_730
+
+
+def test_aggregate_rejects_mixed_input_differences() -> None:
+    base = {
+        "cipher": "simon",
+        "rounds": 3,
+        "split": "test",
+        "n_samples": 100,
+        "accuracy": 0.5,
+        "auc_roc": 0.5,
+        "tpr": 0.5,
+        "tnr": 0.5,
+        "accuracy_advantage": 0.0,
+        "advantage_edge": 0.0,
+        "auc_advantage": 0.0,
+        "accuracy_null_p_value": 1.0,
+        "youden_j": 0.0,
+        "input_delta_right": 0,
+    }
+    rows = [
+        {**base, "seed": 1, "input_delta_left": 1},
+        {**base, "seed": 2, "input_delta_left": 0x40},
+    ]
+    with pytest.raises(ValueError, match="Inconsistent input differences"):
+        aggregate_rows(rows)

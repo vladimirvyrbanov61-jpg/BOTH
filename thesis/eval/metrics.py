@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+_LOG_10 = float(np.log(10.0))
+
 
 def _binary_labels(values: np.ndarray, *, name: str) -> np.ndarray:
     labels = np.asarray(values).ravel()
@@ -45,13 +47,30 @@ def select_validation_threshold(
     return float(np.clip(thresholds[best], 0.0, 1.0))
 
 
-def accuracy_null_p_value(correct: int, n_samples: int) -> float:
-    """Exact two-sided Binomial(n, 0.5) random-guessing p-value."""
+def accuracy_null_log10_p_value(correct: int, n_samples: int) -> float:
+    """Log10 exact two-sided Binomial(n, 0.5) random-guessing p-value."""
     if n_samples < 1 or not 0 <= correct <= n_samples:
         raise ValueError("correct and n_samples must describe a non-empty test set")
-    from scipy.stats import binomtest
+    from scipy.special import logsumexp
+    from scipy.stats import binom
 
-    return float(binomtest(correct, n_samples, p=0.5).pvalue)
+    tail = min(correct, n_samples - correct)
+    log_tail = float(
+        logsumexp(
+            binom.logpmf(
+                np.arange(tail + 1, dtype=np.int64),
+                n_samples,
+                0.5,
+            )
+        )
+    )
+    log_two_sided = min(0.0, float(np.log(2.0)) + log_tail)
+    return log_two_sided / _LOG_10
+
+
+def accuracy_null_p_value(correct: int, n_samples: int) -> float:
+    """Exact p-value, possibly zero when its magnitude is below float range."""
+    return float(10.0 ** accuracy_null_log10_p_value(correct, n_samples))
 
 
 def classification_metrics(
@@ -90,6 +109,7 @@ def classification_metrics(
     auc_advantage = 2.0 * (auc - 0.5)
     youden_j = tpr + tnr - 1.0
     correct = tp + tn
+    null_log10_p = accuracy_null_log10_p_value(correct, len(y_true))
 
     return {
         "accuracy": acc,
@@ -99,7 +119,8 @@ def classification_metrics(
         "accuracy_advantage": float(accuracy_advantage),
         "advantage_edge": float(advantage_edge),
         "auc_advantage": float(auc_advantage),
-        "accuracy_null_p_value": accuracy_null_p_value(correct, len(y_true)),
+        "accuracy_null_p_value": float(10.0**null_log10_p),
+        "accuracy_null_log10_p_value": null_log10_p,
         "youden_j": float(youden_j),
         "tp": tp,
         "tn": tn,
@@ -116,6 +137,7 @@ def metrics_row(
     n_samples: int,
     metrics: dict[str, Any],
     seed: int | None = None,
+    input_delta: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     row = {
         "cipher": cipher,
@@ -133,10 +155,14 @@ def metrics_row(
                 "advantage_edge",
                 "auc_advantage",
                 "accuracy_null_p_value",
+                "accuracy_null_log10_p_value",
                 "youden_j",
             )
         },
     }
     if seed is not None:
         row["seed"] = seed
+    if input_delta is not None:
+        row["input_delta_left"] = int(input_delta[0])
+        row["input_delta_right"] = int(input_delta[1])
     return row

@@ -184,7 +184,10 @@ def build_manifest(
                 "95% Student-t confidence interval across seeds; clipped to "
                 "the mathematical range of bounded metrics"
             ),
-            "null_significance": "per-seed p-values combined with Fisher's method",
+            "null_significance": (
+                "exact per-seed binomial p-values retained in log10 form and "
+                "combined with Fisher's method in log space"
+            ),
         },
         "paths": {key: str(value) if value is not None else None for key, value in paths.items()},
         "progress": {"completed_seeds": [], "failed_seeds": []},
@@ -270,7 +273,10 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
                 "95% Student-t confidence interval across seeds; clipped to "
                 "the mathematical range of bounded metrics"
             ),
-            "null_significance": "per-seed p-values combined with Fisher's method",
+            "null_significance": (
+                "exact per-seed binomial p-values retained in log10 form and "
+                "combined with Fisher's method in log space"
+            ),
         }
     )
     manifest["updated_at"] = utc_now()
@@ -284,7 +290,18 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def record_postprocessing(manifest: dict[str, Any], stage: str) -> None:
-    manifest.setdefault("postprocessing", []).append(
-        {"stage": stage, "completed_at": utc_now()}
-    )
+def record_postprocessing(
+    manifest: dict[str, Any],
+    stage: str,
+    *,
+    repo_root: Path | None = None,
+) -> None:
+    record: dict[str, Any] = {
+        "stage": stage,
+        "completed_at": utc_now(),
+        "command": [sys.executable, *sys.argv],
+    }
+    if repo_root is not None:
+        record["source_sha256"] = source_tree_digest(repo_root)
+        record["git"] = _git_metadata(repo_root)
+    manifest.setdefault("postprocessing", []).append(record)

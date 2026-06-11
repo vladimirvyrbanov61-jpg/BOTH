@@ -14,8 +14,8 @@ from thesis.eval.round_sweep import run_round_sweep
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _run_pytest(test_paths: list[str], *, verbose: bool) -> int:
-    cmd = [sys.executable, "-m", "pytest", *test_paths]
+def _run_pytest(*, verbose: bool) -> int:
+    cmd = [sys.executable, "-m", "pytest"]
     if verbose:
         cmd.append("-v")
     print("[run_thesis] pytest:", " ".join(cmd))
@@ -107,22 +107,7 @@ def main() -> int:
     print(f"[run_thesis] config: {cfg_path}")
 
     if not args.skip_tests:
-        test_files = [
-            "tests/test_cipher_kats.py",
-            "tests/test_thesis_encoding.py",
-            "tests/test_cnn.py",
-            "tests/test_classical.py",
-            "tests/test_round_sweep_smoke.py",
-            "tests/test_aggregate.py",
-            "tests/test_compare_experiments.py",
-            "tests/test_config_validation.py",
-            "tests/test_metrics.py",
-            "tests/test_cipher_profile_cache.py",
-            "Simon/test_simon.py",
-            "Speck/test_speck.py",
-            "Speck/test_speck3264.py",
-        ]
-        rc = _run_pytest(test_files, verbose=args.pytest_verbose)
+        rc = _run_pytest(verbose=args.pytest_verbose)
         if rc != 0:
             print("[run_thesis] pytest failed; aborting.", file=sys.stderr)
             return rc

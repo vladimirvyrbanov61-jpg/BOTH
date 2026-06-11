@@ -140,6 +140,9 @@ def plot_classical_estimates(
     classical: dict[int, float],
     out_path: Path,
     uncertainty: dict[int, dict[str, float]] | None = None,
+    *,
+    delta: tuple[int, int],
+    top_k: int,
 ) -> None:
     xs = sorted(set(rounds) & set(classical))
     probabilities = [max(classical[rounds_value], 1e-300) for rounds_value in xs]
@@ -178,7 +181,8 @@ def plot_classical_estimates(
     ax2.set_title("Log2 probability")
 
     fig.suptitle(
-        f"{cipher.upper()}32/64 - Classical characteristic beam-search estimate"
+        f"{cipher.upper()}32/64 - Classical characteristic beam-search estimate\n"
+        f"Delta_P=(0x{delta[0]:04x}, 0x{delta[1]:04x}), beam width={top_k}"
     )
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -193,6 +197,9 @@ def plot_cipher_comparison(
     classical: dict[int, float],
     out_path: Path,
     classical_uncertainty: dict[int, dict[str, float]] | None = None,
+    *,
+    delta: tuple[int, int],
+    top_k: int,
 ) -> None:
     xs = sorted(set(rounds) & set(neural) & set(classical))
     if not xs:
@@ -233,7 +240,13 @@ def plot_cipher_comparison(
     ]
 
     sns.set_theme(style="whitegrid", context="paper", font_scale=1.1)
-    fig, ax1 = plt.subplots(figsize=(8, 5))
+    fig, (ax1, ax2) = plt.subplots(
+        2,
+        1,
+        figsize=(8, 7),
+        sharex=True,
+        gridspec_kw={"height_ratios": [1, 1]},
+    )
     color_ai = "#1f77b4"
     color_classical = "#d62728"
 
@@ -248,14 +261,12 @@ def plot_cipher_comparison(
         markersize=7,
         label="AI signed accuracy edge 2(acc - 0.5) (95% CI)",
     )
-    ax1.set_xlabel("Round count R")
     ax1.set_ylabel("Neural signed accuracy edge", color=color_ai)
     ax1.tick_params(axis="y", labelcolor=color_ai)
     ax1.set_xticks(xs)
     ax1.grid(True, alpha=0.3)
     ax1.axhline(0.0, color=color_ai, linewidth=1, alpha=0.35)
 
-    ax2 = ax1.twinx()
     ax2.errorbar(
         xs,
         log2_probability,
@@ -272,17 +283,25 @@ def plot_cipher_comparison(
         markersize=7,
         label="Classical log2(best retained trail estimate)",
     )
+    ax2.set_xlabel("Round count R")
     ax2.set_ylabel("log2(best retained trail estimate)", color=color_classical)
     ax2.tick_params(axis="y", labelcolor=color_classical)
-    ax1.set_title(
-        f"{cipher.upper()}32/64 - Neural distinguisher vs classical estimate"
+    ax2.set_xticks(xs)
+    ax2.grid(True, alpha=0.3)
+    fig.suptitle(
+        f"{cipher.upper()}32/64 - Neural and classical round trends\n"
+        f"Delta_P=(0x{delta[0]:04x}, 0x{delta[1]:04x}), beam width={top_k}"
     )
-
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right", framealpha=0.95)
-
-    fig.tight_layout()
+    ax1.legend(loc="best", framealpha=0.95)
+    ax2.legend(loc="best", framealpha=0.95)
+    fig.text(
+        0.5,
+        0.01,
+        "Separate panels show different quantities; compare round trends, not magnitudes.",
+        ha="center",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 0.95))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -368,6 +387,8 @@ def run_compare(
             classical,
             classical_path,
             uncertainty=classical_uncertainty,
+            delta=delta,
+            top_k=top_k,
         )
         outputs.append(classical_path)
         print(f"[compare] saved {classical_path}")
@@ -379,6 +400,8 @@ def run_compare(
             classical,
             out_path,
             classical_uncertainty=classical_uncertainty,
+            delta=delta,
+            top_k=top_k,
         )
         outputs.append(out_path)
         print(f"[compare] saved {out_path}")
@@ -402,7 +425,11 @@ def run_compare(
             == manifest.get("parameters", {}).get("seeds")
         ):
             manifest["status"] = "completed"
-        record_postprocessing(manifest, "neural_vs_classical_plots")
+        record_postprocessing(
+            manifest,
+            "neural_vs_classical_plots",
+            repo_root=_REPO_ROOT,
+        )
         write_manifest(manifest_path, manifest)
     return outputs
 

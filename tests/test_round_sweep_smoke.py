@@ -55,6 +55,9 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
     assert 0.0 <= row["accuracy"] <= 1.0
     assert -1.0 <= row["advantage_edge"] <= 1.0
     assert 0.0 <= row["accuracy_null_p_value"] <= 1.0
+    assert row["accuracy_null_log10_p_value"] <= 0.0
+    assert row["input_delta_left"] == 1
+    assert row["input_delta_right"] == 0
     assert results_path.exists()
     assert results_path.parent == smoke_dirs["results"]
 
@@ -72,6 +75,9 @@ def test_round_sweep_smoke_simon_r3(smoke_dirs: dict[str, Path]) -> None:
         aggregate_rows = list(csv.DictReader(f))
     assert len(aggregate_rows) == 1
     assert aggregate_rows[0]["n_seeds"] == "1"
+    assert aggregate_rows[0]["input_delta_left"] == "1"
+    assert aggregate_rows[0]["input_delta_right"] == "0"
+    assert float(aggregate_rows[0]["accuracy_null_log10_p_value_fisher"]) <= 0.0
     assert float(aggregate_rows[0]["accuracy_std"]) == 0.0
     assert (results_path / "simon_accuracy.png").exists()
 

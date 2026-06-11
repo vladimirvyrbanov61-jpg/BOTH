@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from thesis.eval.metrics import (
+    accuracy_null_log10_p_value,
     accuracy_null_p_value,
     classification_metrics,
     select_validation_threshold,
@@ -34,6 +35,13 @@ def test_validation_threshold_improves_shifted_scores() -> None:
 def test_null_p_value_detects_clear_edge() -> None:
     assert accuracy_null_p_value(50, 100) == 1.0
     assert accuracy_null_p_value(80, 100) < 1e-8
+
+
+def test_extreme_null_p_value_retains_finite_log_magnitude() -> None:
+    assert accuracy_null_p_value(14_991, 15_000) == 0.0
+    log10_p = accuracy_null_log10_p_value(14_991, 15_000)
+    assert np.isfinite(log10_p)
+    assert log10_p < -4_000
 
 
 def test_classification_metrics_rejects_misaligned_inputs() -> None:

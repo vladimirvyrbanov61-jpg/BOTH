@@ -26,7 +26,9 @@ Each neural-distinguisher dataset is balanced:
   Every pair receives a newly sampled random 64-bit key, then both plaintexts
   are encrypted under that same key for the selected number of rounds.
 - Class 0: two independently sampled random 32-bit blocks.
-- Model input: `bits(C0) || bits(C1)`, represented as 64 binary values.
+- Model input: `bits(C0) || bits(C1)`, where each value is one complete
+  32-bit ciphertext block represented by its two 16-bit words. Concatenating
+  the two blocks produces 64 binary input values.
 
 Plaintexts and keys are not stored in the thesis cache. Dataset generation and
 the stratified train/validation/test split are derived from the experiment seed.
@@ -55,7 +57,10 @@ The headline accuracy statistic is the signed edge `2 * (accuracy - 0.5)`.
 Unlike `abs(accuracy - 0.5)`, its expectation under random guessing is zero.
 Every seed row also reports an exact two-sided binomial null p-value. Across
 seeds these p-values are combined with Fisher's method; they are not averaged.
-A small positive absolute deviation alone is not evidence of a distinguisher.
+Log10 p-values are retained and combined in log space so extremely strong
+results do not lose magnitude when an ordinary floating-point p-value
+underflows to zero. A small positive absolute deviation alone is not evidence
+of a distinguisher.
 
 ## Classical Comparison
 
@@ -67,8 +72,11 @@ retained differential characteristic over the requested rounds.
 The classical value is a non-exhaustive beam-search estimate, not a formal
 upper or lower bound. For SPECK it additionally contains Monte Carlo sampling
 uncertainty. It is not numerically equivalent to neural classification
-advantage. Comparison plots show both trends but must not be interpreted as a
-direct magnitude test.
+advantage. Comparison figures therefore use separate stacked panels and must
+be interpreted only as aligned round trends, never as a direct magnitude test.
+The configured beam width is recorded, but no finite top-k setting provides a
+known approximation guarantee; conclusions should acknowledge this limitation
+or include a beam-width sensitivity check.
 Classical CSV reuse is accepted only when the cipher, input difference, sample
 count, top-k setting, seed, repetition count, and schema all match.
 
@@ -84,6 +92,14 @@ Editable package installation is also supported:
 
 ```powershell
 python -m pip install -e ".[test]"
+```
+
+Linux/macOS setup:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-thesis.txt
 ```
 
 ## Commands
