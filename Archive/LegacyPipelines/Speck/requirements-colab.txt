@@ -1,2 +1,0 @@
-# Google Colab — install after uploading/cloning the Speck repo
--r requirements.txt
